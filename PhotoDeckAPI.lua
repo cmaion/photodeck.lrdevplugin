@@ -2,6 +2,7 @@ local LrDate = import 'LrDate'
 local LrDigest = import 'LrDigest'
 local LrFileUtils = import 'LrFileUtils'
 local LrHttp = import 'LrHttp'
+local LrPathUtils = import 'LrPathUtils'
 local LrStringUtils = import 'LrStringUtils'
 local LrXml = import 'LrXml'
 local LrTasks = import 'LrTasks'
@@ -1083,7 +1084,27 @@ local function buildPhotoInfoFromLrPhoto(photo, updating)
   return photoInfo
 end
 
-local function buildFileUploadParams(contentPath)
+local function buildUploadFileName(contentPath, photo)
+  -- by default, look at rendered file path name
+  local res = LrPathUtils.leafName(contentPath)
+
+  -- try to use original file name if possible, and add virtual copy name if present
+  if photo then
+    local fileName = photo:getFormattedMetadata("fileName")
+    if fileName and fileName ~= "" then
+      local copyName = photo:getFormattedMetadata("copyName")
+      if copyName and copyName ~= "" then
+        res = LrPathUtils.addExtension(LrPathUtils.removeExtension(fileName) .. '-' .. copyName:gsub("[./\\]", "_"), LrPathUtils.extension(res))
+      else
+        res = LrPathUtils.addExtension(LrPathUtils.removeExtension(fileName), LrPathUtils.extension(res))
+      end
+    end
+  end
+
+  return res
+end
+
+local function buildFileUploadParams(contentPath, photo)
   local content = {}
   local upload_location_requested = false
   local file_size = 0
@@ -1092,12 +1113,12 @@ local function buildFileUploadParams(contentPath)
     local file_attrs = LrFileUtils.fileAttributes(contentPath)
     file_size = file_attrs.fileSize
     table.insert(content, { name = 'media[content][upload_location]', value = 'REQUEST' })
-    table.insert(content, { name = 'media[content][file_name]', value = PhotoDeckUtils.basename(contentPath) })
+    table.insert(content, { name = 'media[content][file_name]', value = buildUploadFileName(contentPath, photo) })
     table.insert(content, { name = 'media[content][file_size]', value = file_size })
     table.insert(content, { name = 'media[content][mime_type]', value = mime_type })
     upload_location_requested = true
   else
-    table.insert(content, { name = 'media[content]', filePath = contentPath, fileName = PhotoDeckUtils.basename(contentPath), contentType = mime_type })
+    table.insert(content, { name = 'media[content]', filePath = contentPath, fileName = buildUploadFileName(contentPath, photo), contentType = mime_type })
   end
   return content, upload_location_requested, file_size, mime_type
 end
@@ -1158,7 +1179,7 @@ function PhotoDeckAPI.uploadPhoto(urlname, attributes)
   local file_size
   local mime_type
   if attributes.contentPath then
-    content, upload_location_requested, file_size, mime_type = buildFileUploadParams(attributes.contentPath)
+    content, upload_location_requested, file_size, mime_type = buildFileUploadParams(attributes.contentPath, attributes.lrPhoto)
   end
   if attributes.publishToGallery then
     table.insert(content, { name = 'media[publish_to_galleries]', value = attributes.publishToGallery })
@@ -1199,7 +1220,7 @@ function PhotoDeckAPI.updatePhoto(photoId, urlname, attributes, handleNotFound)
   local file_size
   local mime_type
   if attributes.contentPath then
-    content, upload_location_requested, file_size, mime_type = buildFileUploadParams(attributes.contentPath)
+    content, upload_location_requested, file_size, mime_type = buildFileUploadParams(attributes.contentPath, attributes.lrPhoto)
   end
   if attributes.contentUploadLocation then
     table.insert(content, { name = 'media[content][upload_location]', value = attributes.contentUploadLocation })

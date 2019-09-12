@@ -86,10 +86,6 @@ function PhotoDeckUtils.printLrTable(t, sep)
   return table.concat(result, sep)
 end
 
-function PhotoDeckUtils.basename(path)
-  return string.match(path, '([^/\\]*)$')
-end
-
 -- parses datetimes formatted as 2015-02-05T21:30:38+01:00
 function PhotoDeckUtils.XMLDateTimeToCoca(s)
   local coca = nil

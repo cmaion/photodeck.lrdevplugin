@@ -1,3 +1,7 @@
+0.16.4 - 12/09/2019
+-------------------
+Include virtual copy name in file names
+
 0.16.3 - 07/02/2019
 -------------------
 Reorder published photos directly from Lightroom (thanks to Kim Aldis)
