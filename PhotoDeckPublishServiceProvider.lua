@@ -266,6 +266,13 @@ function publishServiceProvider.processRenderedPhotos( functionContext, exportCo
         end
 
         if not error_msg and upload and upload.uuid and upload.uuid ~= "" then
+          if upload.filename and upload.filename ~= "" then
+            -- Store PhotoDeck file name
+            catalog:withPrivateWriteAccessDo(function(context)
+              photo:setPropertyForPlugin(_PLUGIN, "fileName", upload.filename)
+            end)
+          end
+
           if isPublish then
             -- Also save the remote photo ID at the LrPhoto level, so that we can find it when publishing in a different gallery
             catalog:withWriteAccessDo( "publish", function( context )

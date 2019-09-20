@@ -1,3 +1,7 @@
+0.16.5 - 20/09/2019
+-------------------
+Store PhotoDeck file names in Lightroom catalog (useful for searching)
+
 0.16.4 - 12/09/2019
 -------------------
 Include virtual copy name in file names

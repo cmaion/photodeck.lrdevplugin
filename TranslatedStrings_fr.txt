@@ -1,3 +1,4 @@
+"$$$/PhotoDeck/MetaData/PhotoDeckFileName=Nom du fichier"
 "$$$/PhotoDeck/Publish/Collection=Galerie"
 "$$$/PhotoDeck/Publish/CollectionSet=Dossier"
 "$$$/PhotoDeck/Publish/GoToCollection=Aller à la galerie PhotoDeck"
