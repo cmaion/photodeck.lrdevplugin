@@ -1084,26 +1084,6 @@ local function buildPhotoInfoFromLrPhoto(photo, updating)
   return photoInfo
 end
 
-local function buildUploadFileName(contentPath, photo)
-  -- by default, look at rendered file path name
-  local res = LrPathUtils.leafName(contentPath)
-
-  -- try to use original file name if possible, and add virtual copy name if present
-  if photo then
-    local fileName = photo:getFormattedMetadata("fileName")
-    if fileName and fileName ~= "" then
-      local copyName = photo:getFormattedMetadata("copyName")
-      if copyName and copyName ~= "" then
-        res = LrPathUtils.addExtension(LrPathUtils.removeExtension(fileName) .. '-' .. copyName:gsub("[./\\]", "_"), LrPathUtils.extension(res))
-      else
-        res = LrPathUtils.addExtension(LrPathUtils.removeExtension(fileName), LrPathUtils.extension(res))
-      end
-    end
-  end
-
-  return res
-end
-
 local function buildFileUploadParams(contentPath, photo)
   local content = {}
   local upload_location_requested = false
@@ -1113,12 +1093,12 @@ local function buildFileUploadParams(contentPath, photo)
     local file_attrs = LrFileUtils.fileAttributes(contentPath)
     file_size = file_attrs.fileSize
     table.insert(content, { name = 'media[content][upload_location]', value = 'REQUEST' })
-    table.insert(content, { name = 'media[content][file_name]', value = buildUploadFileName(contentPath, photo) })
+    table.insert(content, { name = 'media[content][file_name]', value = LrPathUtils.leafName(contentPath) })
     table.insert(content, { name = 'media[content][file_size]', value = file_size })
     table.insert(content, { name = 'media[content][mime_type]', value = mime_type })
     upload_location_requested = true
   else
-    table.insert(content, { name = 'media[content]', filePath = contentPath, fileName = buildUploadFileName(contentPath, photo), contentType = mime_type })
+    table.insert(content, { name = 'media[content]', filePath = contentPath, fileName = LrPathUtils.leafName(contentPath), contentType = mime_type })
   end
   return content, upload_location_requested, file_size, mime_type
 end

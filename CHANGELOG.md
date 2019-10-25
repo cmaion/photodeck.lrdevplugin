@@ -1,3 +1,7 @@
+0.16.6 - 25/10/2019
+-------------------
+Restore ability to use custom file names (reverts 0.16.4)
+
 0.16.5 - 20/09/2019
 -------------------
 Store PhotoDeck file names in Lightroom catalog (useful for searching)
