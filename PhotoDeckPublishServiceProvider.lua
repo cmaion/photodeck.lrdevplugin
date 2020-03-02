@@ -118,7 +118,7 @@ local function getPhotoDeckPhotoIdsStoredInCatalog(photo)
   return res
 end
 
-local function storePhotoDeckPhotoIdsInCatalog(photo, websiteuuid, photouuid)
+local function storePhotoDeckPhotoIdsInCatalog(catalog, photo, websiteuuid, photouuid)
   local curr = getPhotoDeckPhotoIdsStoredInCatalog(photo)
   curr[websiteuuid] = photouuid
   local str = ''
@@ -129,7 +129,13 @@ local function storePhotoDeckPhotoIdsInCatalog(photo, websiteuuid, photouuid)
       str = str .. tostring(v) .. ' '
     end
   end
-  photo:setPropertyForPlugin(_PLUGIN, "photoId", str)
+
+  local prev = photo:getPropertyForPlugin(_PLUGIN, "photoId")
+  if prev ~= str then
+    catalog:withWriteAccessDo( "publish", function( context )
+      photo:setPropertyForPlugin(_PLUGIN, "photoId", str)
+    end)
+  end
 end
 
 
@@ -266,7 +272,7 @@ function publishServiceProvider.processRenderedPhotos( functionContext, exportCo
         end
 
         if not error_msg and upload and upload.uuid and upload.uuid ~= "" then
-          if upload.filename and upload.filename ~= "" then
+          if upload.filename and upload.filename ~= "" and upload.filename ~= photo:getPropertyForPlugin(_PLUGIN, "fileName") then
             -- Store PhotoDeck file name
             catalog:withPrivateWriteAccessDo(function(context)
               photo:setPropertyForPlugin(_PLUGIN, "fileName", upload.filename)
@@ -275,9 +281,7 @@ function publishServiceProvider.processRenderedPhotos( functionContext, exportCo
 
           if isPublish then
             -- Also save the remote photo ID at the LrPhoto level, so that we can find it when publishing in a different gallery
-            catalog:withWriteAccessDo( "publish", function( context )
-              storePhotoDeckPhotoIdsInCatalog(photo, catalogKey, upload.uuid)
-            end)
+            storePhotoDeckPhotoIdsInCatalog(catalog, photo, catalogKey, upload.uuid)
 
             -- Mark all instances of this Lightroom Photo within our published collections as being clean (not edited).
             -- E.g., when metadata have been changed, re-publishing from any of the published collection will update the PhotoDeck photo for all. No need to re-publish from each published collection.
