@@ -285,7 +285,7 @@ function publishServiceProvider.processRenderedPhotos( functionContext, exportCo
               for _, publishedCollection in pairs(photo:getContainedPublishedCollections()) do
                 if publishedCollection:getService().localIdentifier == exportContext.publishService.localIdentifier then
                   for _, publishedPhotoCopy in pairs(publishedCollection:getPublishedPhotos()) do
-                    if publishedPhotoCopy:getPhoto().localIdentifier == photo.localIdentifier then
+                    if publishedPhotoCopy:getPhoto().localIdentifier == photo.localIdentifier and publishedPhotoCopy:getEditedFlag() then
                       catalog:withWriteAccessDo("Marking photo as clean", function( context )
                         publishedPhotoCopy:setEditedFlag(false)
                       end)
