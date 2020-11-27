@@ -5,7 +5,9 @@ local LrHttp = import 'LrHttp'
 local LrPathUtils = import 'LrPathUtils'
 local LrStringUtils = import 'LrStringUtils'
 local LrXml = import 'LrXml'
+local LrDialogs = import 'LrDialogs'
 local LrTasks = import 'LrTasks'
+local LrView = import 'LrView'
 local PhotoDeckUtils = require 'PhotoDeckUtils'
 local PhotoDeckAPIXSLT = require 'PhotoDeckAPIXSLT'
 
@@ -29,6 +31,8 @@ local PhotoDeckAPI = {
   secret = '',
   password = '',
   loggedin = false,
+  otpEnabled = false,
+  otp = nil,
   sessionCookie = nil,
   canSynchronize = true
 }
@@ -61,8 +65,13 @@ local function auth_headers(method, uri, querystring)
   -- set login cookies
   if PhotoDeckAPI.username and PhotoDeckAPI.password and not PhotoDeckAPI.loggedin then
     -- not logged in, send HTTP Basic credentials
+    local password = PhotoDeckAPI.password;
+    if PhotoDeckAPI.otpEnabled and PhotoDeckAPI.otp then
+      password = password .. '+' .. PhotoDeckAPI.otp
+      PhotoDeckAPI.otp = nil -- valid only once
+    end
     local authorization = 'Basic ' .. LrStringUtils.encodeBase64(PhotoDeckAPI.username ..
-      ':' .. PhotoDeckAPI.password)
+      ':' .. password)
     table.insert(headers, { field = 'Authorization',  value = authorization })
 
   elseif PhotoDeckAPI.sessionCookie then
@@ -171,10 +180,10 @@ local function handle_response(seq, response, resp_headers, onerror)
       resume_requests_at = LrDate.currentTime() + 30
     end
 
-    local error_msg_from_xml = PhotoDeckAPIXSLT.transform(response, PhotoDeckAPIXSLT.error)
-    if error_msg_from_xml and error_msg_from_xml ~= "" then
+    local error_from_xml = PhotoDeckAPIXSLT.transform(response, PhotoDeckAPIXSLT.error)
+    if error_from_xml and error_from_xml.error and error_from_xml.error ~= "" then
       -- We got an error from the API, use that error message instead
-      error_msg = error_msg_from_xml
+      error_msg = error_from_xml.error
     end
 
     if onerror and onerror[status_code] then
@@ -186,11 +195,54 @@ local function handle_response(seq, response, resp_headers, onerror)
     --if resp_headers then
     --  logger:error(PhotoDeckUtils.printLrTable(resp_headers))
     --end
-    if status_code == "401" or status_code == "999" then
+    if status_code == "401" then
       PhotoDeckAPI.loggedin = false
       PhotoDeckAPI.sessionCookie = nil
+      if error_from_xml then
+        if error_from_xml.authmethod == 'basic:password+otp' then
+          if PhotoDeckAPI.otpEnabled then
+            logger:error(string.format(' %s <- %s [%s]: %s (%s)', seq, status_code, request_id, error_msg, 'Incorrect OTP code'))
+          else
+            logger:trace(string.format(' %s <- %s [%s]: %s (%s)', seq, status_code, request_id, error_msg, 'Retrying with OTP'))
+            PhotoDeckAPI.otpEnabled = true
+          end
+
+          local f = LrView.osFactory();
+          local c = f:column {
+            spacing = f:dialog_spacing(),
+            bind_to_object = PhotoDeckAPI,
+            f:row {
+              f:static_text {
+                title = LOC "$$$/PhotoDeck/OTPDialog/Code=Authentication code:",
+                alignment = 'right'
+              },
+              f:edit_field {
+                value = LrView.bind 'otp',
+                immediate = false,
+                width_in_chars = 6
+              }
+            }
+          }
+          local otp_res = LrDialogs.presentModalDialog {
+            title = LOC "$$$/PhotoDeck/OTPDialog/Title=PhotoDeck Two-factor authentication",
+            contents = c
+          }
+          if otp_res == 'ok' then
+            return 'retry', error_msg
+          end
+
+        elseif error_from_xml.authmethod == 'basic' then
+          if PhotoDeckAPI.otpEnabled then
+            logger:trace(string.format(' %s <- %s [%s]: %s (%s)', seq, status_code, request_id, error_msg, 'Retrying without OTP'))
+            PhotoDeckAPI.otpEnabled = false
+            return 'retry', error_msg
+          end
+        end
+      end
     end
     if status_code == "999" then
+      PhotoDeckAPI.loggedin = false
+      PhotoDeckAPI.sessionCookie = nil
       logger:error(string.format(' %s <- %s [%s]: %s %s', seq, status_code, request_id, error_msg, printTable(resp_headers)))
     else
       logger:error(string.format(' %s <- %s [%s]: %s', seq, status_code, request_id, error_msg))
@@ -249,6 +301,11 @@ function PhotoDeckAPI.request(method, uri, data, onerror)
   end
 
   result, error_msg = handle_response(seq, result, resp_headers, onerror)
+
+  if result == 'retry' then
+    return PhotoDeckAPI.request(method, uri, data, onerror)
+  end
+
   return result, error_msg
 end
 
@@ -276,6 +333,10 @@ function PhotoDeckAPI.requestMultiPart(method, uri, content, onerror)
 
   result, error_msg = handle_response(seq, result, resp_headers, onerror)
 
+  if result == 'retry' then
+    return PhotoDeckAPI.requestMultiPart(method, uri, content, onerror)
+  end
+
   return result, error_msg
 end
 
@@ -290,14 +351,12 @@ function PhotoDeckAPI.connect(key, secret, username, password)
     PhotoDeckAPI.secret = secret
   end
 
-  if PhotoDeckAPI.loggedin and PhotoDeckAPI.username ~= username then
+  if PhotoDeckAPI.loggedin and (PhotoDeckAPI.username ~= username or PhotoDeckAPI.password ~= password) then
     PhotoDeckAPI.logout()
   end
 
   PhotoDeckAPI.username = username
   PhotoDeckAPI.password = password
-  PhotoDeckAPI.loggedin = false
-  PhotoDeckAPI.sessionCookie = nil
 end
 
 function PhotoDeckAPI.ping(text)
@@ -314,6 +373,8 @@ end
 function PhotoDeckAPI.logout()
   logger:trace('PhotoDeckAPI.logout()')
   local response, error_msg = PhotoDeckAPI.request('GET', '/logout.xml')
+  PhotoDeckAPI.loggedin = false
+  PhotoDeckAPI.sessionCookie = nil
   return response, error_msg
 end
 

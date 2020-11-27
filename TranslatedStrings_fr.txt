@@ -7,6 +7,8 @@
 "$$$/PhotoDeck/ApiKeyDialog/ApiKey=Clé de l'API :"
 "$$$/PhotoDeck/ApiKeyDialog/ApiSecret=Secret de l'API :"
 "$$$/PhotoDeck/ApiKeyDialog/ChangeAction=Modifier",
+"$$$/PhotoDeck/OTPDialog/Title=Authentification à 2 facteurs :"
+"$$$/PhotoDeck/OTPDialog/Code=Code d'authentification"
 "$$$/PhotoDeck/AccountDialog/NoLogin=Vous n'êtes pas identifié sur PhotoDeck."
 "$$$/PhotoDeck/AccountDialog/Title=Compte PhotoDeck"
 "$$$/PhotoDeck/AccountDialog/Account=Compte PhotoDeck"

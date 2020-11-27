@@ -17,7 +17,11 @@ local PhotoDeckAPIXSLT = {}
 
 PhotoDeckAPIXSLT.error = xsltheader .. [=====[
   <xsl:template match='/reply'>
-return "<xsl:value-of select='error'/>"
+local t = {
+  error = [====[<xsl:value-of select='error'/>]====],
+  authmethod = [====[<xsl:value-of select='auth-method'/>]====]
+}
+return t
   </xsl:template>
 ]=====] .. xsltfooter
 

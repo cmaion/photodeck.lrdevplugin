@@ -1,3 +1,7 @@
+0.17.0 - 27/11/2020
+-------------------
+Add support for two-factor authentication
+
 0.16.7 - 02/03/2020
 -------------------
 Fix a case where publishing a photo in a second gallery would make it jump back again to "Modified Photos to Re-Published" in the other gallery
