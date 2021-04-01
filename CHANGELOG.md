@@ -1,3 +1,7 @@
+0.17.1 - 01/04/2021
+-------------------
+Improve gallery creation performance
+
 0.17.0 - 27/11/2020
 -------------------
 Add support for two-factor authentication
