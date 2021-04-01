@@ -554,7 +554,7 @@ function PhotoDeckAPI.createOrUpdateGallery(urlname, collectionInfo, updateSetti
     gallery = PhotoDeckAPI.gallery(urlname, galleryId, true)
   end
 
-  -- Find PhotoDeck parent gallery
+  -- Find PhotoDeck parent gallery ID
   local parentGalleryId = nil
   local parentGalleryMissingId = nil
   local parentJustCreated = false
@@ -566,90 +566,101 @@ function PhotoDeckAPI.createOrUpdateGallery(urlname, collectionInfo, updateSetti
   for _, parent in pairs(collectionInfo.parents) do
     parentGalleryId = parent.remoteCollectionId
   end
-
-  if gallery then
-    if parentGalleryId ~= gallery.parentuuid then
-      -- not properly connected?
-      parentGalleryId = nil
-    end
-
-  else
-    -- New gallery, PhotoDeck ID not known or deleted from PhotoDeck: check that parent still exists
-    if parentGalleryId and not PhotoDeckAPI.gallery(urlname, parentGalleryId, true) then
-      -- nope, we need to recreate
-      parentGalleryMissingId = parentGalleryId
-      parentGalleryId = nil
-    end
+  if gallery and parentGalleryId ~= gallery.parentuuid then
+    -- not properly connected?
+    parentGalleryId = nil
   end
 
-  if not parentGalleryId then
-    -- Find all PhotoDeck parent galleries, create if missing and connect them to Lightroom if not already done
-    -- Start from the root gallery
-    parentGalleryId = website.rootgalleryuuid
+  local lookupIntoParents = not gallery or not parentGalleryId
+  local iterations = 0
+  while lookupIntoParents do
+    iterations = iterations + 1
+    if iterations > 2 then -- prevent endless loops, we are not supposed to do this more than twice
+      return nil, error_msg or LOC("$$$/PhotoDeck/API/Gallery/SubGalleryNotFound=Couldn't get subgallery")
+    end
+    lookupIntoParents = false
+    parentJustCreated = false
 
-    -- Now iterate over each parent, starting from the top level
-    for _, parent in pairs(collectionInfo.parents) do
-      local parentGallery = nil
-      local parentId = parent.remoteCollectionId
-      if parentId and parentId ~= parentGalleryMissingId then
-        -- find by remote ID if known
-        parentGallery = PhotoDeckAPI.gallery(urlname, parentId, true)
-      end
-      if not parentGallery and not parentJustCreated then
-        -- not found, search by name within subgalleries present in our parent
-        -- (unless we have just created this gallery, in which case we assume that it's empty)
-        local subgalleries, error_msg = PhotoDeckAPI.subGalleriesInGallery(urlname, parentGalleryId, parent.name)
-        if error_msg then
-          return nil, error_msg
+    if not parentGalleryId then
+      -- PhotoDeck parent gallery ID unknown: find all parent galleries, create
+      -- if missing and connect them to Lightroom if not already done
+
+      -- Start from the root gallery
+      parentGalleryId = website.rootgalleryuuid
+
+      -- Now iterate over each parent, starting from the top level
+      for _, parent in pairs(collectionInfo.parents) do
+        local parentGallery = nil
+        local parentId = parent.remoteCollectionId
+        if parentId and parentId ~= parentGalleryMissingId then
+          -- find by remote ID if known
+          parentGallery = PhotoDeckAPI.gallery(urlname, parentId, true)
         end
+        if not parentGallery and not parentJustCreated then
+          -- not found, search by name within subgalleries present in our parent
+          -- (unless we have just created this gallery, in which case we assume that it's empty)
+          local subgalleries, error_msg = PhotoDeckAPI.subGalleriesInGallery(urlname, parentGalleryId, parent.name)
+          if error_msg then
+            return nil, error_msg
+          end
+          for uuid, subgallery in pairs(subgalleries) do
+            if subgallery.name == parent.name then
+              parentGallery, error_msg = PhotoDeckAPI.gallery(urlname, uuid)
+              if error_msg or not parentGallery then
+                return nil, error_msg or LOC("$$$/PhotoDeck/API/Gallery/SubGalleryNotFound=Couldn't get subgallery")
+              end
+              break
+            end
+          end
+        end
+        if not parentGallery then
+          -- not found, create
+          parentGallery, error_msg = PhotoDeckAPI.createGallery(urlname, parentGalleryId, { name = parent.name })
+          if error_msg then
+            return nil, error_msg
+          end
+          parentJustCreated = true
+        else
+          parentJustCreated = false
+        end
+        local parentCollection = collection.catalog:getPublishedCollectionByLocalIdentifier(parent.localCollectionId)
+        parentGallery.fullurl = website.homeurl .. "/-/" .. parentGallery.fullurlpath
+        if parentCollection and (not parent.remoteCollectionId or parentCollection:getRemoteId() ~= parentGallery.uuid or parentCollection:getRemoteUrl() ~= parentGallery.fullurl) then
+          --logger:trace('Updating parent remote Id and Url')
+          parentCollection.catalog:withWriteAccessDo('Set Parent Remote Id and Url', function()
+            parentCollection:setRemoteId(parentGallery.uuid)
+            parentCollection:setRemoteUrl(parentGallery.fullurl)
+          end)
+        end
+
+        parentGalleryId = parentGallery.uuid -- our parent gallery is now this one
+      end
+    end
+
+    -- New gallery, PhotoDeck ID not known or deleted from PhotoDeck, but we
+    -- know the PhotoDeck ID of the parent: try to find gallery by name under
+    -- its parent (unless it has just been created, in which case we can assume
+    -- that it's empty)
+    if not gallery and not parentJustCreated then
+      local subgalleries, error_msg = PhotoDeckAPI.subGalleriesInGallery(urlname, parentGalleryId, collectionInfo.name, iterations == 1)
+      if error_msg then
+        return nil, error_msg
+      end
+      if subgalleries then
         for uuid, subgallery in pairs(subgalleries) do
-          if subgallery.name == parent.name then
-            parentGallery, error_msg = PhotoDeckAPI.gallery(urlname, uuid)
-            if error_msg or not parentGallery then
+          if subgallery.name == collectionInfo.name then
+            gallery, error_msg = PhotoDeckAPI.gallery(urlname, uuid)
+            if error_msg or not gallery then
               return nil, error_msg or LOC("$$$/PhotoDeck/API/Gallery/SubGalleryNotFound=Couldn't get subgallery")
             end
             break
           end
         end
-      end
-      if not parentGallery then
-        -- not found, create
-        parentGallery, error_msg = PhotoDeckAPI.createGallery(urlname, parentGalleryId, { name = parent.name })
-        if error_msg then
-          return nil, error_msg
-        end
-        parentJustCreated = true
       else
-        parentJustCreated = false
-      end
-      local parentCollection = collection.catalog:getPublishedCollectionByLocalIdentifier(parent.localCollectionId)
-      parentGallery.fullurl = website.homeurl .. "/-/" .. parentGallery.fullurlpath
-      if parentCollection and (not parent.remoteCollectionId or parentCollection:getRemoteId() ~= parentGallery.uuid or parentCollection:getRemoteUrl() ~= parentGallery.fullurl) then
-        --logger:trace('Updating parent remote Id and Url')
-        parentCollection.catalog:withWriteAccessDo('Set Parent Remote Id and Url', function()
-          parentCollection:setRemoteId(parentGallery.uuid)
-          parentCollection:setRemoteUrl(parentGallery.fullurl)
-        end)
-      end
-
-      parentGalleryId = parentGallery.uuid -- our parent gallery is now this one
-    end
-  end
-
-  if not gallery and not parentJustCreated then
-    -- now search by name within subgalleries present in our parent
-    -- (unless we have just created the parent gallery, in which case we assume that it's empty)
-    local subgalleries, error_msg = PhotoDeckAPI.subGalleriesInGallery(urlname, parentGalleryId, collectionInfo.name)
-    if error_msg then
-      return nil, error_msg
-    end
-    for uuid, subgallery in pairs(subgalleries) do
-      if subgallery.name == collectionInfo.name then
-        gallery, error_msg = PhotoDeckAPI.gallery(urlname, uuid)
-        if error_msg or not gallery then
-          return nil, error_msg or LOC("$$$/PhotoDeck/API/Gallery/SubGalleryNotFound=Couldn't get subgallery")
-        end
-        break
+        -- we need to recreate the parent, it's missing
+        parentGalleryMissingId = parentGalleryId
+        parentGalleryId = nil
+        lookupIntoParents = true
       end
     end
   end
@@ -1098,9 +1109,13 @@ function PhotoDeckAPI.photosInGallery(urlname, galleryId)
   end
 end
 
-function PhotoDeckAPI.subGalleriesInGallery(urlname, galleryId, matchingName)
+function PhotoDeckAPI.subGalleriesInGallery(urlname, galleryId, matchingName, ignore_not_found)
   logger:trace(string.format('PhotoDeckAPI.subGalleriesInGallery("%s", "%s", "%s")', urlname, galleryId, matchingName))
   local url = '/websites/' .. urlname .. '/galleries/' .. galleryId .. '/subgalleries.xml'
+  local onerror = {}
+  if ignore_not_found then
+    onerror["404"] = function() return 'NOT_FOUND' end
+  end
 
   local galleries
   local subgalleries = {}
@@ -1115,7 +1130,10 @@ function PhotoDeckAPI.subGalleriesInGallery(urlname, galleryId, matchingName)
   while not error_msg and page < totalPages do
     page = page + 1
     params.page = page
-    response, error_msg = PhotoDeckAPI.request('GET', url, params)
+    response, error_msg = PhotoDeckAPI.request('GET', url, params, onerror)
+    if ignore_not_found and response == 'NOT_FOUND' then
+      return nil
+    end
     galleries = PhotoDeckAPIXSLT.transform(response, PhotoDeckAPIXSLT.subGalleriesInGallery)
     --logger:trace("PhotoDeckAPI.subGalleriesInGallery " .. tostring(page) .. "/" .. tostring(totalPages) .. ": " .. printTable(galleries))
 
