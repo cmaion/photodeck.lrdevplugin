@@ -154,8 +154,21 @@ local function throttle_request()
 end
 
 local function handle_response(seq, response, resp_headers, onerror)
-  local status = PhotoDeckUtils.filter(resp_headers, function(v) return isTable(v) and v.field == 'Status' end)[1]
-  local request_id = PhotoDeckUtils.filter(resp_headers, function(v) return isTable(v) and v.field == 'X-Request-Id' end)[1]
+  local status
+  local request_id
+
+  for _, v in ipairs(resp_headers) do
+    if isTable(v) then
+      v.field = v.field:lower() -- lowercase all headers (HTTP/2 does this by default, but headers received via HTTP/1 are not lowercased)
+
+      if v.field == 'status' then
+        status = v
+      elseif v.field == 'x-request-id' then
+        request_id = v
+      end
+    end
+  end
+
   local error_msg = nil
   local status_code = "999"
 
@@ -270,7 +283,7 @@ local function handle_response(seq, response, resp_headers, onerror)
     logger:trace(string.format(' %s <- %s [%s]', seq, status_code, request_id))
 
     -- Try to extract session cookie. We will reinject it later, as it seems that some Lightroom installations loose cookies between calls.
-    for _, set_cookie in ipairs(PhotoDeckUtils.filter(resp_headers, function(v) return isTable(v) and v.field == 'Set-Cookie' end)) do
+    for _, set_cookie in ipairs(PhotoDeckUtils.filter(resp_headers, function(v) return isTable(v) and v.field == 'set-cookie' end)) do
       local parsed_cookies = LrHttp.parseCookie(set_cookie.value, false)
       if parsed_cookies[PhotoDeckAPI_SESSIONCOOKIE] then
         PhotoDeckAPI.sessionCookie = parsed_cookies[PhotoDeckAPI_SESSIONCOOKIE]
