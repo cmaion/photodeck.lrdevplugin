@@ -23,6 +23,7 @@ local PhotoDeckAPI_SESSIONCOOKIE = '_ficelle_session'
 local PhotoDeckAPI_KEY = ''
 local PhotoDeckAPI_SECRET = ''
 
+local isString = PhotoDeckUtils.isString
 local isTable = PhotoDeckUtils.isTable
 local printTable = PhotoDeckUtils.printTable
 
@@ -126,32 +127,120 @@ end
 
 -- Makes sure that we don't call the API more than once every second starting from the 5th request in a row.
 -- This is done to avoid hitting rate limits on the PhotoeDeck API and throwing errors
-local resume_requests_at = 0
-local last_request_at = 0
-local consecutive_requests = 0
-local function throttle_request()
-  local now = LrDate.currentTime()
-  local sleep_for = resume_requests_at - now
-  if sleep_for > 0 then
-    logger:trace(string.format('       ** Sleeping for %.2f seconds as we have previously hit a rate limit', sleep_for))
-    LrTasks.sleep(sleep_for)
-    now = LrDate.currentTime()
-  end
-  resume_requests_at = 0
+local ratelimit_aggressiveness = 10
+local ratelimit_capacity = 60
+local ratelimit_remaining = ratelimit_capacity
+local ratelimit_window = 60
+local ratelimit_reset = 60
+local ratelimit_wait_until = 0
 
-  local elapsed = now - last_request_at
-  if elapsed < 30 then
-    consecutive_requests = consecutive_requests + 1
-    if consecutive_requests > 4 and elapsed < 1 then
-      sleep_for = 1 - elapsed
-      logger:trace(string.format('       ** Sleeping for %.2f seconds to keep request rate at 1/sec max', sleep_for))
-      LrTasks.sleep(sleep_for)
-      now = LrDate.currentTime()
-    end
+local function ratelimit_throttle()
+  local wait_time = ratelimit_wait_until - LrDate.currentTime()
+  if wait_time > 0 then
+    log_trace(string.format('       ** Sleeping for %.2f seconds to keep within rate limiting quota', wait_time))
+    LrTasks.sleep(wait_time)
   else
-    consecutive_requests = 1
+    ratelimit_wait_until = 0
   end
-  last_request_at = now
+end
+
+local function ratelimit_delay_next(seconds)
+  local wait_until = LrDate.currentTime() + seconds
+  if wait_until > ratelimit_wait_until then
+    ratelimit_wait_until = wait_until
+  end
+end
+
+local function ratelimit_update_limits(resp_headers)
+  local limit
+  local remaining
+  local reset
+  local retry_after
+  local wait_for = 0
+
+  for _, v in ipairs(resp_headers) do
+    if isTable(v) then
+      if v.field == 'ratelimit-limit' then
+        limit = v.value
+      elseif v.field == 'ratelimit-remaining' then
+        remaining = v.value
+      elseif v.field == 'ratelimit-reset' then
+        reset = v.value
+      elseif v.field == 'retry-after' then
+        retry_after = v.value
+      end
+    end
+  end
+
+  if isString(reset) then
+    reset = tonumber(reset)
+    if reset and reset <= 120 then
+      ratelimit_reset = reset
+      ratelimit_window = reset
+    end
+  end
+
+  if isString(limit) then
+    local capacity = string.gsub(limit, ",.+", "")
+
+    if capacity then
+      capacity = tonumber(capacity)
+      if capacity then
+        ratelimit_capacity = capacity
+        local max_window = 0
+
+        for param in string.gmatch(limit, ", ([^,]+)") do
+          local quota = string.gsub(param, ";.+", "")
+          if quota then
+            quota = tonumber(quota)
+            if quota then
+              for j in string.gmatch(param, ";([^;]*)") do
+                local k,v,_
+                _, _, k, v = string.find(j, "(%a+)=(.*)")
+                if k == "w" then
+                  v = tonumber(v)
+                  if quota <= capacity and v and v > max_window then
+                    max_window = v
+                  end
+                end
+              end
+            end
+          end
+        end
+
+        if max_window > 0 then
+          ratelimit_window = max_window
+        end
+      end
+    end
+  end
+
+  if isString(remaining) then
+    remaining = tonumber(remaining)
+    if remaining then
+      ratelimit_remaining = remaining
+      if ratelimit_remaining <= 0 then
+        wait_for = ratelimit_reset
+      elseif ratelimit_capacity <= 0 then
+        wait_for = ratelimit_window
+      elseif ratelimit_remaining < ratelimit_capacity then
+        wait_for = (((ratelimit_capacity - ratelimit_remaining) / ratelimit_capacity) ^ ratelimit_aggressiveness) * ratelimit_window
+      end
+      log_trace(string.format('       ** Rate limiting: remaining: %i/%i, window: %i, reset: %i, aggressiveness: %i, wait before next request: %.2f seconds', ratelimit_remaining, ratelimit_capacity, ratelimit_window, ratelimit_reset, ratelimit_aggressiveness, wait_for))
+    end
+  end
+
+  if isString(retry_after) then
+    retry_after = tonumber(retry_after)
+    if (retry_after and retry_after <= 120) then
+      wait_for = retry_after
+      log_trace(string.format('       ** Retry after %.2f seconds', wait_for))
+    end
+  end
+
+  if wait_for > 0 then
+    ratelimit_delay_next(wait_for)
+  end
 end
 
 local function handle_response(seq, response, resp_headers, onerror)
@@ -188,14 +277,16 @@ local function handle_response(seq, response, resp_headers, onerror)
     status_code = string.sub(status.value, 1, 3)
   end
 
+  ratelimit_update_limits(resp_headers)
+
   if status_code >= "400" then
     if status then
       -- Get error from Status header
       error_msg = status.value
       if status_code == "429" then
-        -- Too Many Requests. Wait 30 seconds until next request.
+        -- Too Many Requests. Wait until next request.
         -- Note: this HTTP error seems to be filtered out on LR/Windows at a lower level (the error will get catched in the status_code = "999" case)
-        resume_requests_at = LrDate.currentTime() + 30
+        ratelimit_delay_next(ratelimit_reset)
       end
     else
       -- Generic HTTP error
@@ -208,8 +299,8 @@ local function handle_response(seq, response, resp_headers, onerror)
 
     if not response and status_code == "999" then
       error_msg = LOC("$$$/PhotoDeck/API/NoResponse=No response from network")
-      -- No network connection, or we are blocked. Wait 30 seconds until next request.
-      resume_requests_at = LrDate.currentTime() + 30
+      -- No network connection, or we are blocked. Wait until next request.
+      ratelimit_delay_next(ratelimit_reset)
     end
 
     local error_from_xml = PhotoDeckAPIXSLT.transform(response, PhotoDeckAPIXSLT.error)
@@ -319,7 +410,7 @@ function PhotoDeckAPI.request(method, uri, data, onerror)
   end
 
   -- call API
-  throttle_request()
+  ratelimit_throttle()
   local result, resp_headers
   local seq = string.format("%5i", math.random(99999))
   if method == 'GET' then
@@ -359,7 +450,7 @@ function PhotoDeckAPI.requestMultiPart(method, uri, content, onerror)
   local fullurl = PhotoDeckAPI_BASEURL .. uri
 
   -- call API
-  throttle_request()
+  ratelimit_throttle()
   local result, resp_headers
   result, resp_headers = LrHttp.postMultipart(fullurl, content, headers)
 
@@ -1301,6 +1392,8 @@ function PhotoDeckAPI.uploadPhoto(urlname, attributes)
       return PhotoDeckAPI.uploadPhoto(urlname, attributes) -- retry, indirect upload not available
     end
   end
+
+  ratelimit_delay_next(0.334) -- 3 uploads/sec max
 
   return media, error_msg, (error_msg and PhotoDeckAPIXSLT.transform(response, PhotoDeckAPIXSLT.uploadStopWithError) == "true")
 end

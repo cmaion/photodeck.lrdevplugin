@@ -1,3 +1,7 @@
+0.17.2 - 21/05/2021
+-------------------
+Implement new requests rate limits API. This should improve upload speed for smaller files
+
 0.17.1 - 01/04/2021
 -------------------
 Improve gallery creation performance
