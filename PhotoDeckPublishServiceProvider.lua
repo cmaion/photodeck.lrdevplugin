@@ -6,6 +6,7 @@ local LrHttp = import 'LrHttp'
 
 local logger = import 'LrLogger'( 'PhotoDeckPublishLightroomPlugin' )
 logger:enable('logfile')
+local log_trace = logger:quick('trace')
 
 local PhotoDeckAPI = require 'PhotoDeckAPI'
 local PhotoDeckDialogs = require 'PhotoDeckDialogs'
@@ -140,7 +141,7 @@ end
 
 
 function publishServiceProvider.processRenderedPhotos( functionContext, exportContext )
-  logger:trace('publishServiceProvider.processRenderedPhotos')
+  log_trace('publishServiceProvider.processRenderedPhotos')
 
   local exportSession = exportContext.exportSession
   local exportSettings = assert( exportContext.propertyTable )
@@ -323,7 +324,7 @@ end
 
 -- Delete photo from published collection
 publishServiceProvider.deletePhotosFromPublishedCollection = function(publishSettings, arrayOfPhotoIds, deletedCallback, localCollectionId)
-  logger:trace('publishServiceProvider.deletePhotosFromPublishedCollection')
+  log_trace('publishServiceProvider.deletePhotosFromPublishedCollection')
   PhotoDeckAPI.connect(publishSettings.apiKey, publishSettings.apiSecret, publishSettings.username, publishSettings.password)
   local catalog = LrApplication.activeCatalog()
   local collection = catalog:getPublishedCollectionByLocalIdentifier(localCollectionId)
@@ -414,7 +415,7 @@ end
 
 -- Update published collection
 publishServiceProvider.updateCollectionSettings = function( publishSettings, info )
-  logger:trace('publishServiceProvider.updateCollectionSettings')
+  log_trace('publishServiceProvider.updateCollectionSettings')
   PhotoDeckAPI.connect(publishSettings.apiKey, publishSettings.apiSecret, publishSettings.username, publishSettings.password)
   local urlname = publishSettings.websiteChosen
   local result, error_msg = PhotoDeckAPI.createOrUpdateGallery(urlname, info, true)
@@ -426,7 +427,7 @@ end
 
 -- Update published collection set
 publishServiceProvider.updateCollectionSetSettings = function( publishSettings, info )
-  logger:trace('publishServiceProvider.updateCollectionSetSettings')
+  log_trace('publishServiceProvider.updateCollectionSetSettings')
   PhotoDeckAPI.connect(publishSettings.apiKey, publishSettings.apiSecret, publishSettings.username, publishSettings.password)
   local urlname = publishSettings.websiteChosen
   local result, error_msg = PhotoDeckAPI.createOrUpdateGallery(urlname, info, true)
@@ -438,7 +439,7 @@ end
 
 -- Rename published collection
 publishServiceProvider.renamePublishedCollection = function( publishSettings, info )
-  logger:trace('publishServiceProvider.renamePublishedCollection')
+  log_trace('publishServiceProvider.renamePublishedCollection')
   PhotoDeckAPI.connect(publishSettings.apiKey, publishSettings.apiSecret, publishSettings.username, publishSettings.password)
   local urlname = publishSettings.websiteChosen
   local result, error_msg = PhotoDeckAPI.createOrUpdateGallery(urlname, info)
@@ -450,7 +451,7 @@ end
 
 -- Reparent published collection
 publishServiceProvider.reparentPublishedCollection = function( publishSettings, info )
-  logger:trace('publishServiceProvider.reparentPublishedCollection')
+  log_trace('publishServiceProvider.reparentPublishedCollection')
   PhotoDeckAPI.connect(publishSettings.apiKey, publishSettings.apiSecret, publishSettings.username, publishSettings.password)
   local urlname = publishSettings.websiteChosen
   local result, error_msg = PhotoDeckAPI.createOrUpdateGallery(urlname, info)
@@ -462,7 +463,7 @@ end
 
 -- Delete published collection
 publishServiceProvider.deletePublishedCollection = function( publishSettings, info )
-  logger:trace('publishServiceProvider.deletePublishedCollection')
+  log_trace('publishServiceProvider.deletePublishedCollection')
   PhotoDeckAPI.connect(publishSettings.apiKey, publishSettings.apiSecret, publishSettings.username, publishSettings.password)
   local urlname = publishSettings.websiteChosen
   local galleryId = info.remoteId
@@ -475,7 +476,7 @@ end
 
 -- Go to published photo
 publishServiceProvider.goToPublishedPhoto = function( publishSettings, info )
-  logger:trace('publishServiceProvider.goToPublishedPhoto')
+  log_trace('publishServiceProvider.goToPublishedPhoto')
   local catalog = LrApplication.activeCatalog()
 
   -- The following is just ugly and not robust, but Lightroom doesn't gives us the LrPublishedCollection object, just it's name and parents.
@@ -496,7 +497,7 @@ publishServiceProvider.goToPublishedPhoto = function( publishSettings, info )
     local galleryurl = publishedCollection:getRemoteUrl()
     if galleryurl and galleryurl ~= '' then
       local url = galleryurl .. '/-/medias/' .. info.remoteId
-      logger:trace('Opening ' .. url)
+      log_trace('Opening ' .. url)
       LrHttp.openUrlInBrowser(url)
     else
       LrErrors.throwUserError(LOC("$$$/PhotoDeck/GoToPublishedPhoto/GalleryUrlNotFound=Gallery address is not known yet"))
@@ -509,7 +510,7 @@ end
 
 -- Reorder collection
 publishServiceProvider.imposeSortOrderOnPublishedCollection = function( publishSettings, info, remoteIdSequence )
-  logger:trace('publishServiceProvider.imposeSortOrderOnPublishedCollection')
+  log_trace('publishServiceProvider.imposeSortOrderOnPublishedCollection')
   PhotoDeckAPI.connect(publishSettings.apiKey, publishSettings.apiSecret, publishSettings.username, publishSettings.password)
 
   local urlname = publishSettings.websiteChosen

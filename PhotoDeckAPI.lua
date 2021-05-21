@@ -13,6 +13,7 @@ local PhotoDeckAPIXSLT = require 'PhotoDeckAPIXSLT'
 
 local logger = import 'LrLogger'( 'PhotoDeckPublishLightroomPlugin' )
 logger:enable('logfile')
+local log_info, log_trace, log_error = logger:quick('info', 'trace', 'error')
 
 local PhotoDeckAPI_BASEURL = 'https://api.photodeck.com'
 local PhotoDeckMY_BASEURL = 'https://my.photodeck.com'
@@ -50,8 +51,8 @@ local function sign(method, uri, querystring)
   local request = string.format('%s\n%s\n%s\n%s\n%s\n', method, uri,
                                 querystring, PhotoDeckAPI.secret, timestamp)
   local signature = PhotoDeckAPI.key .. ':' .. LrDigest.SHA1.digest(request)
-  -- logger:trace(timestamp)
-  -- logger:trace(signature)
+  -- log_trace(timestamp)
+  -- log_trace(signature)
   return {
     { field = 'X-PhotoDeck-TimeStamp', value=timestamp },
     { field = 'X-PhotoDeck-Authorization', value=signature },
@@ -218,13 +219,13 @@ local function handle_response(seq, response, resp_headers, onerror)
     end
 
     if onerror and onerror[status_code] then
-      logger:trace(string.format(' %s <- %s [%s] (handled by onerror)', seq, status_code, request_id))
+      log_trace(string.format(' %s <- %s [%s] (handled by onerror)', seq, status_code, request_id))
       return onerror[status_code]()
     end
 
-    --logger:error("Bad response: " .. error_msg .. " => " .. (response or "(no response)"))
+    --log_error("Bad response: " .. error_msg .. " => " .. (response or "(no response)"))
     --if resp_headers then
-    --  logger:error(PhotoDeckUtils.printLrTable(resp_headers))
+    --  log_error(PhotoDeckUtils.printLrTable(resp_headers))
     --end
     if status_code == "401" then
       PhotoDeckAPI.loggedin = false
@@ -232,9 +233,9 @@ local function handle_response(seq, response, resp_headers, onerror)
       if error_from_xml then
         if error_from_xml.authmethod == 'basic:password+otp' then
           if PhotoDeckAPI.otpEnabled then
-            logger:error(string.format(' %s <- %s [%s]: %s (%s)', seq, status_code, request_id, error_msg, 'Incorrect OTP code'))
+            log_error(string.format(' %s <- %s [%s]: %s (%s)', seq, status_code, request_id, error_msg, 'Incorrect OTP code'))
           else
-            logger:trace(string.format(' %s <- %s [%s]: %s (%s)', seq, status_code, request_id, error_msg, 'Retrying with OTP'))
+            log_trace(string.format(' %s <- %s [%s]: %s (%s)', seq, status_code, request_id, error_msg, 'Retrying with OTP'))
             PhotoDeckAPI.otpEnabled = true
           end
 
@@ -264,7 +265,7 @@ local function handle_response(seq, response, resp_headers, onerror)
 
         elseif error_from_xml.authmethod == 'basic' then
           if PhotoDeckAPI.otpEnabled then
-            logger:trace(string.format(' %s <- %s [%s]: %s (%s)', seq, status_code, request_id, error_msg, 'Retrying without OTP'))
+            log_trace(string.format(' %s <- %s [%s]: %s (%s)', seq, status_code, request_id, error_msg, 'Retrying without OTP'))
             PhotoDeckAPI.otpEnabled = false
             return 'retry', error_msg
           end
@@ -274,13 +275,13 @@ local function handle_response(seq, response, resp_headers, onerror)
     if status_code == "999" then
       PhotoDeckAPI.loggedin = false
       PhotoDeckAPI.sessionCookie = nil
-      logger:error(string.format(' %s <- %s [%s]: %s %s', seq, status_code, request_id, error_msg, printTable(resp_headers)))
+      log_error(string.format(' %s <- %s [%s]: %s %s', seq, status_code, request_id, error_msg, printTable(resp_headers)))
     else
-      logger:error(string.format(' %s <- %s [%s]: %s', seq, status_code, request_id, error_msg))
+      log_error(string.format(' %s <- %s [%s]: %s', seq, status_code, request_id, error_msg))
     end
   else
     PhotoDeckAPI.loggedin = true
-    logger:trace(string.format(' %s <- %s [%s]', seq, status_code, request_id))
+    log_trace(string.format(' %s <- %s [%s]', seq, status_code, request_id))
 
     -- Try to extract session cookie. We will reinject it later, as it seems that some Lightroom installations loose cookies between calls.
     for _, set_cookie in ipairs(PhotoDeckUtils.filter(resp_headers, function(v) return isTable(v) and v.field == 'set-cookie' end)) do
@@ -322,11 +323,11 @@ function PhotoDeckAPI.request(method, uri, data, onerror)
   local result, resp_headers
   local seq = string.format("%5i", math.random(99999))
   if method == 'GET' then
-    logger:trace(string.format(' %s -> %s %s', seq, method, fullurl))
+    log_trace(string.format(' %s -> %s %s', seq, method, fullurl))
     result, resp_headers = LrHttp.get(fullurl, headers)
   else
     -- override default Content-Type!
-    logger:trace(string.format(' %s -> %s %s\n%s', seq, method, fullurl, body))
+    log_trace(string.format(' %s -> %s %s\n%s', seq, method, fullurl, body))
     table.insert(headers, { field = 'Content-Type',  value = 'application/x-www-form-urlencoded'})
     result, resp_headers = LrHttp.post(fullurl, body, headers, method)
   end
@@ -343,7 +344,7 @@ end
 function PhotoDeckAPI.requestMultiPart(method, uri, content, onerror)
   local error_msg
   local seq = string.format("%5i", math.random(99999))
-  logger:trace(string.format(' %s -> %s[multipart] %s', seq, method, uri))
+  log_trace(string.format(' %s -> %s[multipart] %s', seq, method, uri))
 
   if method ~= "POST" then
     -- LrHttp doesn't implement non-POSTs multipart requests:
@@ -391,7 +392,7 @@ function PhotoDeckAPI.connect(key, secret, username, password)
 end
 
 function PhotoDeckAPI.ping(text)
-  logger:trace('PhotoDeckAPI.ping()')
+  log_trace('PhotoDeckAPI.ping()')
   local t = {}
   if text then
     t = { text = text }
@@ -402,7 +403,7 @@ function PhotoDeckAPI.ping(text)
 end
 
 function PhotoDeckAPI.logout()
-  logger:trace('PhotoDeckAPI.logout()')
+  log_trace('PhotoDeckAPI.logout()')
   local response, error_msg = PhotoDeckAPI.request('GET', '/logout.xml')
   PhotoDeckAPI.loggedin = false
   PhotoDeckAPI.sessionCookie = nil
@@ -410,19 +411,19 @@ function PhotoDeckAPI.logout()
 end
 
 function PhotoDeckAPI.whoami()
-  logger:trace('PhotoDeckAPI.whoami()')
+  log_trace('PhotoDeckAPI.whoami()')
   local response, error_msg = PhotoDeckAPI.request('GET', '/whoami.xml')
   local result = PhotoDeckAPIXSLT.transform(response, PhotoDeckAPIXSLT.user)
   if not result or not result.email or result.email == '' then
     PhotoDeckAPI.loggedin = false
     PhotoDeckAPI.sessionCookie = nil
   end
-  -- logger:trace(printTable(result))
+  -- log_trace(printTable(result))
   return result, error_msg
 end
 
 function PhotoDeckAPI.websites()
-  logger:trace('PhotoDeckAPI.websites()')
+  log_trace('PhotoDeckAPI.websites()')
   local cacheKey = 'websites/' .. PhotoDeckAPI.username
   local result = PhotoDeckAPICache[cacheKey]
   local response, error_msg = nil
@@ -444,7 +445,7 @@ function PhotoDeckAPI.websites()
     else
       PhotoDeckAPICache[cacheKey] = result
     end
-    -- logger:trace(printTable(result))
+    -- log_trace(printTable(result))
   end
   return result, error_msg
 end
@@ -462,7 +463,7 @@ function PhotoDeckAPI.website(urlname)
 end
 
 function PhotoDeckAPI.galleries(urlname)
-  logger:trace(string.format('PhotoDeckAPI.galleries("%s")', urlname))
+  log_trace(string.format('PhotoDeckAPI.galleries("%s")', urlname))
   local galleries
   local allgalleries = {}
   local response
@@ -478,7 +479,7 @@ function PhotoDeckAPI.galleries(urlname)
     if newTotalPages and newTotalPages ~= "" then
       totalPages = tonumber(newTotalPages)
     end
-    --logger:trace("PhotoDeckAPI.galleries " .. tostring(page) .. "/" .. tostring(totalPages) .. ": " .. printTable(galleries))
+    --log_trace("PhotoDeckAPI.galleries " .. tostring(page) .. "/" .. tostring(totalPages) .. ": " .. printTable(galleries))
 
     if not galleries and not error_msg then
       error_msg = LOC("$$$/PhotoDeck/API/Gallery/ErrorGettingGalleries=Couldn't get galleries")
@@ -494,7 +495,7 @@ function PhotoDeckAPI.galleries(urlname)
     end
   end
   if not error_msg then
-    --logger:trace("PhotoDeckAPI.galleries: " .. printTable(allgalleries))
+    --log_trace("PhotoDeckAPI.galleries: " .. printTable(allgalleries))
     return allgalleries
   else
     return nil, error_msg
@@ -502,19 +503,19 @@ function PhotoDeckAPI.galleries(urlname)
 end
 
 function PhotoDeckAPI.gallery(urlname, galleryId, ignore_not_found)
-  logger:trace(string.format('PhotoDeckAPI.gallery("%s", "%s")', urlname, galleryId))
+  log_trace(string.format('PhotoDeckAPI.gallery("%s", "%s")', urlname, galleryId))
   local onerror = {}
   if ignore_not_found then
     onerror["404"] = function() return nil end
   end
   local response, error_msg = PhotoDeckAPI.request('GET', '/websites/' .. urlname .. '/galleries/' .. galleryId .. '.xml', { view = 'details' }, onerror)
   local result = PhotoDeckAPIXSLT.transform(response, PhotoDeckAPIXSLT.gallery)
-  -- logger:trace(printTable(result))
+  -- log_trace(printTable(result))
   return result, error_msg
 end
 
 function PhotoDeckAPI.openGalleryInBackend(galleryId)
-  logger:trace(string.format('PhotoDeckAPI.openGalleryInBackend("%s")', galleryId))
+  log_trace(string.format('PhotoDeckAPI.openGalleryInBackend("%s")', galleryId))
   LrHttp.openUrlInBrowser(PhotoDeckMY_BASEURL .. '/medias/manage?gallery_id=' .. galleryId)
 end
 
@@ -530,7 +531,7 @@ local function buildGalleryInfoFromLrCollectionInfo(collectionInfo)
 end
 
 function PhotoDeckAPI.createGallery(urlname, parentId, collectionInfo)
-  logger:trace(string.format('PhotoDeckAPI.createGallery("%s", "%s", <collectionInfo>)', urlname, parentId))
+  log_trace(string.format('PhotoDeckAPI.createGallery("%s", "%s", <collectionInfo>)', urlname, parentId))
   local galleryInfo = buildGalleryInfoFromLrCollectionInfo(collectionInfo)
   galleryInfo['gallery[content_order]'] = 'manual-last'
   galleryInfo['gallery[parent]'] = parentId
@@ -540,7 +541,7 @@ function PhotoDeckAPI.createGallery(urlname, parentId, collectionInfo)
 end
 
 function PhotoDeckAPI.updateGallery(urlname, galleryId, parentId, collectionInfo)
-  logger:trace(string.format('PhotoDeckAPI.updateGallery("%s", "%s", "%s", <collectionInfo>)', urlname, galleryId, parentId))
+  log_trace(string.format('PhotoDeckAPI.updateGallery("%s", "%s", "%s", <collectionInfo>)', urlname, galleryId, parentId))
   local galleryInfo = buildGalleryInfoFromLrCollectionInfo(collectionInfo)
   galleryInfo['gallery[parent]'] = parentId
   local response, error_msg = PhotoDeckAPI.request('PUT', '/websites/' .. urlname .. '/galleries/' .. galleryId .. '.xml', galleryInfo)
@@ -550,7 +551,7 @@ end
 
 
 function PhotoDeckAPI.createOrUpdateGallery(urlname, collectionInfo, updateSettings)
-  logger:trace(string.format('PhotoDeckAPI.createOrUpdateGallery("%s", <collectionInfo>)', urlname))
+  log_trace(string.format('PhotoDeckAPI.createOrUpdateGallery("%s", <collectionInfo>)', urlname))
 
   local website, error_msg = PhotoDeckAPI.website(urlname)
   if error_msg then
@@ -639,7 +640,7 @@ function PhotoDeckAPI.createOrUpdateGallery(urlname, collectionInfo, updateSetti
         local parentCollection = collection.catalog:getPublishedCollectionByLocalIdentifier(parent.localCollectionId)
         parentGallery.fullurl = website.homeurl .. "/-/" .. parentGallery.fullurlpath
         if parentCollection and (not parent.remoteCollectionId or parentCollection:getRemoteId() ~= parentGallery.uuid or parentCollection:getRemoteUrl() ~= parentGallery.fullurl) then
-          --logger:trace('Updating parent remote Id and Url')
+          --log_trace('Updating parent remote Id and Url')
           parentCollection.catalog:withWriteAccessDo('Set Parent Remote Id and Url', function()
             parentCollection:setRemoteId(parentGallery.uuid)
             parentCollection:setRemoteUrl(parentGallery.fullurl)
@@ -725,7 +726,7 @@ function PhotoDeckAPI.createOrUpdateGallery(urlname, collectionInfo, updateSetti
   gallery.fullurl = website.homeurl .. "/-/" .. gallery.fullurlpath
   if collection:getRemoteId() == nil or collection:getRemoteId() ~= gallery.uuid or
     collection:getRemoteUrl() ~= gallery.fullurl then
-    --logger:trace('Updating collection remote Id and Url')
+    --log_trace('Updating collection remote Id and Url')
     collection.catalog:withWriteAccessDo('Set Remote Id and Url', function()
       collection:setRemoteId(gallery.uuid)
       collection:setRemoteUrl(gallery.fullurl)
@@ -735,7 +736,7 @@ function PhotoDeckAPI.createOrUpdateGallery(urlname, collectionInfo, updateSetti
 end
 
 function PhotoDeckAPI.synchronizeGalleries(urlname, publishService, progressScope)
-  logger:trace(string.format('PhotoDeckAPI.synchronizeGalleries("%s", <publishService>, <progressScope>)', urlname))
+  log_trace(string.format('PhotoDeckAPI.synchronizeGalleries("%s", <publishService>, <progressScope>)', urlname))
   local catalog = publishService.catalog
 
   if not PhotoDeckAPI.canSynchronize then
@@ -786,7 +787,7 @@ function PhotoDeckAPI.synchronizeGalleries(urlname, publishService, progressScop
 
     local parentPDGallery = photodeckGalleries[parentPDGalleryUUID]
     progressScope:setCaption(LOC("$$$/PhotoDeck/SynchronizeStatus/Synchronizing=Synchronizing ^1", parentPDGallery.name))
-    logger:trace(string.format("SYNC: Exploring PhotoDeck galleries under %s '%s' at depth %i", parentPDGalleryUUID, parentPDGallery.name, depth))
+    log_trace(string.format("SYNC: Exploring PhotoDeck galleries under %s '%s' at depth %i", parentPDGalleryUUID, parentPDGallery.name, depth))
     local pdGalleries = photodeckGalleriesByParent[parentPDGalleryUUID] or {}
     local lrCollectionSets = parentLRCollectionSet:getChildCollectionSets()
     local lrCollections = parentLRCollectionSet:getChildCollections()
@@ -822,7 +823,7 @@ function PhotoDeckAPI.synchronizeGalleries(urlname, publishService, progressScop
 
       local gallery = pdGalleries[rid]
       if not gallery or gallery.parentuuid ~= parentPDGalleryUUID then
-        logger:trace(string.format("SYNC: Lightroom Published Collection %i '%s' is connected to PhotoDeck gallery %s, but it doesn't exist anymore. Deleting Published Collection.", lrCollection.localIdentifier, lrCollection:getName(), rid or '(none)'))
+        log_trace(string.format("SYNC: Lightroom Published Collection %i '%s' is connected to PhotoDeck gallery %s, but it doesn't exist anymore. Deleting Published Collection.", lrCollection.localIdentifier, lrCollection:getName(), rid or '(none)'))
         catalog:withWriteAccessDo('Deleting Published Collection', function()
           lrCollection:delete()
         end)
@@ -831,13 +832,13 @@ function PhotoDeckAPI.synchronizeGalleries(urlname, publishService, progressScop
         -- duplicate LR collections!
         local lrCollectionDup = lrCollectionsByRemoteId[rid]
         if gallery.name == lrCollectionDup:getName() then
-          logger:trace(string.format("SYNC: Lightroom Published Collection %i '%s' is connected to PhotoDeck gallery %s '%s', but we already have Published Collection %i '%s' connected to it. Deleting the former.", lrCollection.localIdentifier, lrCollection:getName(), rid, gallery.name, lrCollectionDup.localIdentifier, lrCollectionDup:getName()))
+          log_trace(string.format("SYNC: Lightroom Published Collection %i '%s' is connected to PhotoDeck gallery %s '%s', but we already have Published Collection %i '%s' connected to it. Deleting the former.", lrCollection.localIdentifier, lrCollection:getName(), rid, gallery.name, lrCollectionDup.localIdentifier, lrCollectionDup:getName()))
           catalog:withWriteAccessDo('Deleting Published Collection', function()
             lrCollection:delete()
           end)
           deleteCount = deleteCount + 1
         else
-          logger:trace(string.format("SYNC: Lightroom Published Collection %i '%s' is connected to PhotoDeck gallery %s '%s', but we already have Published Collection %i '%s' connected to it. Deleting the later.", lrCollection.localIdentifier, lrCollection:getName(), rid, gallery.name, lrCollectionDup.localIdentifier, lrCollectionDup:getName()))
+          log_trace(string.format("SYNC: Lightroom Published Collection %i '%s' is connected to PhotoDeck gallery %s '%s', but we already have Published Collection %i '%s' connected to it. Deleting the later.", lrCollection.localIdentifier, lrCollection:getName(), rid, gallery.name, lrCollectionDup.localIdentifier, lrCollectionDup:getName()))
           catalog:withWriteAccessDo('Deleting Published Collection', function()
             lrCollectionDup:delete()
           end)
@@ -875,7 +876,7 @@ function PhotoDeckAPI.synchronizeGalleries(urlname, publishService, progressScop
 
       local gallery = pdGalleries[rid]
       if not gallery or gallery.parentuuid ~= parentPDGalleryUUID then
-        logger:trace(string.format("SYNC: Lightroom Published Collection Set %i '%s' is connected to PhotoDeck gallery %s, but it doesn't exist anymore. Deleting Published Collection Set.", lrCollectionSet.localIdentifier, lrCollectionSet:getName(), rid or '(none)'))
+        log_trace(string.format("SYNC: Lightroom Published Collection Set %i '%s' is connected to PhotoDeck gallery %s, but it doesn't exist anymore. Deleting Published Collection Set.", lrCollectionSet.localIdentifier, lrCollectionSet:getName(), rid or '(none)'))
         catalog:withWriteAccessDo('Deleting Published Collection Set', function()
           lrCollectionSet:delete()
         end)
@@ -884,13 +885,13 @@ function PhotoDeckAPI.synchronizeGalleries(urlname, publishService, progressScop
         -- duplicate LR collections sets!
         local lrCollectionSetd = lrCollectionSetsByRemoteId[rid]
         if gallery.name == lrCollectionSetd:getName() then
-          logger:trace(string.format("SYNC: Lightroom Published Collection Set %i '%s' is connected to PhotoDeck gallery %s '%s', but we already have Published Collection Set %i '%s' connected to it. Deleting the former.", lrCollectionSet.localIdentifier, lrCollectionSet:getName(), rid, gallery.name, lrCollectionSetd.localIdentifier, lrCollectionSetd:getName()))
+          log_trace(string.format("SYNC: Lightroom Published Collection Set %i '%s' is connected to PhotoDeck gallery %s '%s', but we already have Published Collection Set %i '%s' connected to it. Deleting the former.", lrCollectionSet.localIdentifier, lrCollectionSet:getName(), rid, gallery.name, lrCollectionSetd.localIdentifier, lrCollectionSetd:getName()))
           catalog:withWriteAccessDo('Deleting Published Collection Set', function()
             lrCollectionSet:delete()
           end)
           deleteCount = deleteCount + 1
         else
-          logger:trace(string.format("SYNC: Lightroom Published Collection Set %i '%s' is connected to PhotoDeck gallery %s '%s', but we already have Published Collection Set %i '%s' connected to it. Deleting the later.", lrCollectionSet.localIdentifier, lrCollectionSet:getName(), rid, gallery.name, lrCollectionSetd.localIdentifier, lrCollectionSetd:getName()))
+          log_trace(string.format("SYNC: Lightroom Published Collection Set %i '%s' is connected to PhotoDeck gallery %s '%s', but we already have Published Collection Set %i '%s' connected to it. Deleting the later.", lrCollectionSet.localIdentifier, lrCollectionSet:getName(), rid, gallery.name, lrCollectionSetd.localIdentifier, lrCollectionSetd:getName()))
           catalog:withWriteAccessDo('Deleting Published Collection Set', function()
             lrCollectionSetd:delete()
           end)
@@ -911,7 +912,7 @@ function PhotoDeckAPI.synchronizeGalleries(urlname, publishService, progressScop
       local shouldBeACollection = not shouldBeACollectionSet and gallery.mediascount and gallery.mediascount ~= '' and tonumber(gallery.mediascount) > 0
 
       if lrCollection and shouldBeACollectionSet then
-        logger:trace(string.format("SYNC: PhotoDeck gallery %s '%s' is connected to Lightroom Published Collection %i, but it should be Publish Collection Set. Deleting Published Collection.", uuid, gallery.name, lrCollection.localIdentifier))
+        log_trace(string.format("SYNC: PhotoDeck gallery %s '%s' is connected to Lightroom Published Collection %i, but it should be Publish Collection Set. Deleting Published Collection.", uuid, gallery.name, lrCollection.localIdentifier))
         catalog:withWriteAccessDo('Deleting Published Collection', function()
           lrCollection:delete()
         end)
@@ -920,7 +921,7 @@ function PhotoDeckAPI.synchronizeGalleries(urlname, publishService, progressScop
       end
 
       if lrCollectionSet and shouldBeACollection then
-        logger:trace(string.format("SYNC: PhotoDeck gallery %s '%s' is connected to Lightroom Published Collection Set %i, but it should be Publish Collection. Deleting Published Collection Set.", uuid, gallery.name, lrCollectionSet.localIdentifier))
+        log_trace(string.format("SYNC: PhotoDeck gallery %s '%s' is connected to Lightroom Published Collection Set %i, but it should be Publish Collection. Deleting Published Collection Set.", uuid, gallery.name, lrCollectionSet.localIdentifier))
         catalog:withWriteAccessDo('Deleting Published Collection Set', function()
           lrCollectionSet:delete()
         end)
@@ -931,21 +932,21 @@ function PhotoDeckAPI.synchronizeGalleries(urlname, publishService, progressScop
       if lrCollection and lrCollectionSet then
         -- exists has both a Lightroom Published Collection and Published Collection Set. Choose the right type and delete the other.
         if shouldBeACollectionSet then
-          logger:trace(string.format("SYNC: PhotoDeck gallery %s '%s' is connected to Lightroom Published Collection Set %i AND to Lightroom Published Collection %i, but it should be Publish Collection Set. Deleting Published Collection.", uuid, gallery.name, lrCollectionSet.localIdentifier, lrCollection.localIdentifier))
+          log_trace(string.format("SYNC: PhotoDeck gallery %s '%s' is connected to Lightroom Published Collection Set %i AND to Lightroom Published Collection %i, but it should be Publish Collection Set. Deleting Published Collection.", uuid, gallery.name, lrCollectionSet.localIdentifier, lrCollection.localIdentifier))
           catalog:withWriteAccessDo('Deleting Published Collection', function()
             lrCollection:delete()
           end)
           deleteCount = deleteCount + 1
           lrCollection = nil
         elseif shouldBeACollection then
-          logger:trace(string.format("SYNC: PhotoDeck gallery %s '%s' is connected to Lightroom Published Collection Set %i AND to Lightroom Published Collection %i, but it should be Publish Collection. Deleting Published Collection Set.", uuid, gallery.name, lrCollectionSet.localIdentifier, lrCollection.localIdentifier))
+          log_trace(string.format("SYNC: PhotoDeck gallery %s '%s' is connected to Lightroom Published Collection Set %i AND to Lightroom Published Collection %i, but it should be Publish Collection. Deleting Published Collection Set.", uuid, gallery.name, lrCollectionSet.localIdentifier, lrCollection.localIdentifier))
           catalog:withWriteAccessDo('Deleting Published Collection Set', function()
             lrCollectionSet:delete()
           end)
           deleteCount = deleteCount + 1
           lrCollectionSet = nil
         else
-          logger:trace(string.format("SYNC: PhotoDeck gallery %s '%s' is connected to Lightroom Published Collection Set %i AND to Lightroom Published Collection %i, and we don't know yet what it should be. Assuming Published Collection, and deleting Published Collection Set.", uuid, gallery.name, lrCollectionSet.localIdentifier, lrCollection.localIdentifier))
+          log_trace(string.format("SYNC: PhotoDeck gallery %s '%s' is connected to Lightroom Published Collection Set %i AND to Lightroom Published Collection %i, and we don't know yet what it should be. Assuming Published Collection, and deleting Published Collection Set.", uuid, gallery.name, lrCollectionSet.localIdentifier, lrCollection.localIdentifier))
           catalog:withWriteAccessDo('Deleting Published Collection', function()
             lrCollection:delete()
           end)
@@ -960,7 +961,7 @@ function PhotoDeckAPI.synchronizeGalleries(urlname, publishService, progressScop
         if lrCollectionSet:getRemoteUrl() ~= gallery.fullurl
           or collectionSettings.description ~= gallery.description
           or collectionSettings.display_style ~= gallery.displaystyle then
-          logger:trace(string.format("SYNC: PhotoDeck gallery %s '%s' already connected to Lightroom Published Collection Set %i. Updating.", uuid, gallery.name, lrCollectionSet.localIdentifier))
+          log_trace(string.format("SYNC: PhotoDeck gallery %s '%s' already connected to Lightroom Published Collection Set %i. Updating.", uuid, gallery.name, lrCollectionSet.localIdentifier))
           collectionSettings.description = gallery.description
           collectionSettings.display_style = gallery.displaystyle
           catalog:withWriteAccessDo('Resynchronize LR collection settings', function()
@@ -969,7 +970,7 @@ function PhotoDeckAPI.synchronizeGalleries(urlname, publishService, progressScop
           end)
           updateCount = updateCount + 1
         else
-          logger:trace(string.format("SYNC: PhotoDeck gallery %s '%s' already connected to Lightroom Published Collection Set %i. Doing nothing.", uuid, gallery.name, lrCollectionSet.localIdentifier))
+          log_trace(string.format("SYNC: PhotoDeck gallery %s '%s' already connected to Lightroom Published Collection Set %i. Doing nothing.", uuid, gallery.name, lrCollectionSet.localIdentifier))
         end
       elseif lrCollection then
         -- Already properly connected, good
@@ -977,7 +978,7 @@ function PhotoDeckAPI.synchronizeGalleries(urlname, publishService, progressScop
         if lrCollection:getRemoteUrl() ~= gallery.fullurl
           or collectionSettings.description ~= gallery.description
           or collectionSettings.display_style ~= gallery.displaystyle then
-          logger:trace(string.format("SYNC: PhotoDeck gallery %s '%s' already connected to Lightroom Published Collection %i. Updating.", uuid, gallery.name, lrCollection.localIdentifier))
+          log_trace(string.format("SYNC: PhotoDeck gallery %s '%s' already connected to Lightroom Published Collection %i. Updating.", uuid, gallery.name, lrCollection.localIdentifier))
           collectionSettings.description = gallery.description
           collectionSettings.display_style = gallery.displaystyle
           catalog:withWriteAccessDo('Resynchronize LR collection settings', function()
@@ -986,7 +987,7 @@ function PhotoDeckAPI.synchronizeGalleries(urlname, publishService, progressScop
           end)
           updateCount = updateCount + 1
         else
-          logger:trace(string.format("SYNC: PhotoDeck gallery %s '%s' already connected to Lightroom Published Collection %i. Doing nothing.", uuid, gallery.name, lrCollection.localIdentifier))
+          log_trace(string.format("SYNC: PhotoDeck gallery %s '%s' already connected to Lightroom Published Collection %i. Doing nothing.", uuid, gallery.name, lrCollection.localIdentifier))
         end
       else
         -- Missing in Lightroom: create
@@ -1008,7 +1009,7 @@ function PhotoDeckAPI.synchronizeGalleries(urlname, publishService, progressScop
         end
 
         if shouldBeACollectionSet then
-          logger:trace(string.format("SYNC: PhotoDeck gallery %s '%s' NOT found in Lightroom. Creating Published Collection Set.", uuid, collectionName))
+          log_trace(string.format("SYNC: PhotoDeck gallery %s '%s' NOT found in Lightroom. Creating Published Collection Set.", uuid, collectionName))
           catalog:withWriteAccessDo('Creating Published Collection Set', function()
             lrCollectionSet = publishService:createPublishedCollectionSet(collectionName, parentLRCollectionSet)
           end)
@@ -1023,11 +1024,11 @@ function PhotoDeckAPI.synchronizeGalleries(urlname, publishService, progressScop
             end)
             createCount = createCount + 1
           else
-            logger:trace(string.format("SYNC ERROR: PhotoDeck gallery %s '%s' NOT found in Lightroom, and failed to create Published Collection Set.", uuid, collectionName))
+            log_trace(string.format("SYNC ERROR: PhotoDeck gallery %s '%s' NOT found in Lightroom, and failed to create Published Collection Set.", uuid, collectionName))
             errorsCount = errorsCount + 1
           end
         elseif shouldBeACollection then
-          logger:trace(string.format("SYNC: PhotoDeck gallery %s '%s' NOT found in Lightroom. Creating Published Collection.", uuid, collectionName))
+          log_trace(string.format("SYNC: PhotoDeck gallery %s '%s' NOT found in Lightroom. Creating Published Collection.", uuid, collectionName))
           catalog:withWriteAccessDo('Creating Published Collection', function()
             lrCollection = publishService:createPublishedCollection(collectionName, parentLRCollectionSet)
           end)
@@ -1042,11 +1043,11 @@ function PhotoDeckAPI.synchronizeGalleries(urlname, publishService, progressScop
             end)
             createCount = createCount + 1
           else
-            logger:trace(string.format("SYNC ERROR: PhotoDeck gallery %s '%s' NOT found in Lightroom, and failed to create Published Collection.", uuid, collectionName))
+            log_trace(string.format("SYNC ERROR: PhotoDeck gallery %s '%s' NOT found in Lightroom, and failed to create Published Collection.", uuid, collectionName))
             errorsCount = errorsCount + 1
           end
         else
-          logger:trace(string.format("SYNC: PhotoDeck gallery %s '%s' NOT found in Lightroom. Creating Published Collection by default.", uuid, collectionName))
+          log_trace(string.format("SYNC: PhotoDeck gallery %s '%s' NOT found in Lightroom. Creating Published Collection by default.", uuid, collectionName))
           catalog:withWriteAccessDo('Creating Published Collection', function()
             lrCollection = publishService:createPublishedCollection(collectionName, parentLRCollectionSet)
           end)
@@ -1061,7 +1062,7 @@ function PhotoDeckAPI.synchronizeGalleries(urlname, publishService, progressScop
             end)
             createCount = createCount + 1
           else
-            logger:trace(string.format("SYNC ERROR: PhotoDeck gallery %s '%s' NOT found in Lightroom, and failed to create Published Collection.", uuid, collectionName))
+            log_trace(string.format("SYNC ERROR: PhotoDeck gallery %s '%s' NOT found in Lightroom, and failed to create Published Collection.", uuid, collectionName))
             errorsCount = errorsCount + 1
           end
         end
@@ -1078,27 +1079,27 @@ function PhotoDeckAPI.synchronizeGalleries(urlname, publishService, progressScop
   synchronizeGallery(1, rootGalleryId, publishService)
 
   if progressScope:isCanceled() then
-    logger:trace("SYNC: Canceled")
+    log_trace("SYNC: Canceled")
   end
-  logger:trace(string.format("SYNC: Done, created: %i, deleted: %i, updated: %i, errors: %i", createCount, deleteCount, updateCount, errorsCount))
+  log_trace(string.format("SYNC: Done, created: %i, deleted: %i, updated: %i, errors: %i", createCount, deleteCount, updateCount, errorsCount))
   PhotoDeckAPI.canSynchronize = true
   return { created = createCount, deleted = deleteCount, updated = updateCount, errors = errorsCount }
 end
 
 -- getPhoto returns a photo with remote ID uuid, or nil if it does not exist
 function PhotoDeckAPI.getPhoto(photoId)
-  logger:trace(string.format('PhotoDeckAPI.getPhoto("%s")', photoId))
+  log_trace(string.format('PhotoDeckAPI.getPhoto("%s")', photoId))
   local url = '/medias/' .. photoId .. '.xml'
   local onerror = {}
   onerror["404"] = function() return nil end
   local response, error_msg = PhotoDeckAPI.request('GET', url, nil, onerror)
   local result = PhotoDeckAPIXSLT.transform(response, PhotoDeckAPIXSLT.media)
-  --logger:trace('PhotoDeckAPI.getPhoto: ' .. printTable(result))
+  --log_trace('PhotoDeckAPI.getPhoto: ' .. printTable(result))
   return result, error_msg
 end
 
 function PhotoDeckAPI.photosInGallery(urlname, galleryId)
-  logger:trace(string.format('PhotoDeckAPI.photosInGallery("%s", "%s")', urlname, galleryId))
+  log_trace(string.format('PhotoDeckAPI.photosInGallery("%s", "%s")', urlname, galleryId))
   local url = '/websites/' .. urlname .. '/galleries/' .. galleryId .. '.xml'
   local response, error_msg = PhotoDeckAPI.request('GET', url, { view = 'details_with_medias' })
   local medias = PhotoDeckAPIXSLT.transform(response, PhotoDeckAPIXSLT.mediasInGallery)
@@ -1115,7 +1116,7 @@ function PhotoDeckAPI.photosInGallery(urlname, galleryId)
         mediaSet[v] = v
       end
     end
-    --logger:trace("PhotoDeckAPI.photosInGallery: " .. printTable(mediaSet))
+    --log_trace("PhotoDeckAPI.photosInGallery: " .. printTable(mediaSet))
     return mediaSet
   else
     return nil, error_msg
@@ -1123,7 +1124,7 @@ function PhotoDeckAPI.photosInGallery(urlname, galleryId)
 end
 
 function PhotoDeckAPI.subGalleriesInGallery(urlname, galleryId, matchingName, ignore_not_found)
-  logger:trace(string.format('PhotoDeckAPI.subGalleriesInGallery("%s", "%s", "%s")', urlname, galleryId, matchingName))
+  log_trace(string.format('PhotoDeckAPI.subGalleriesInGallery("%s", "%s", "%s")', urlname, galleryId, matchingName))
   local url = '/websites/' .. urlname .. '/galleries/' .. galleryId .. '/subgalleries.xml'
   local onerror = {}
   if ignore_not_found then
@@ -1148,7 +1149,7 @@ function PhotoDeckAPI.subGalleriesInGallery(urlname, galleryId, matchingName, ig
       return nil
     end
     galleries = PhotoDeckAPIXSLT.transform(response, PhotoDeckAPIXSLT.subGalleriesInGallery)
-    --logger:trace("PhotoDeckAPI.subGalleriesInGallery " .. tostring(page) .. "/" .. tostring(totalPages) .. ": " .. printTable(galleries))
+    --log_trace("PhotoDeckAPI.subGalleriesInGallery " .. tostring(page) .. "/" .. tostring(totalPages) .. ": " .. printTable(galleries))
 
     if not galleries and not error_msg then
       error_msg = LOC("$$$/PhotoDeck/API/Gallery/ErrorGettingSubgalleries=Couldn't get sub galleries in gallery")
@@ -1169,7 +1170,7 @@ function PhotoDeckAPI.subGalleriesInGallery(urlname, galleryId, matchingName, ig
     end
   end
   if not error_msg then
-    --logger:trace("PhotoDeckAPI.subGalleriesInGallery: " .. printTable(subgalleries))
+    --log_trace("PhotoDeckAPI.subGalleriesInGallery: " .. printTable(subgalleries))
     return subgalleries
   else
     return nil, error_msg
@@ -1227,9 +1228,9 @@ local function handleIndirectUpload(contentPath, urlname, media, file_size, mime
       table.insert(content, { name = k, value = v })
     end
     table.insert(content, { name = media.uploadfileparam, filePath = contentPath, fileName = media.filename, contentType = mime_type })
-    --logger:trace('PhotoDeckAPI.handleIndirectUpload: ' .. printTable(content))
+    --log_trace('PhotoDeckAPI.handleIndirectUpload: ' .. printTable(content))
     local seq = string.format("%5i", math.random(99999))
-    logger:trace(string.format(' %s -> %s[multipart] %s', seq, 'POST', media.uploadurl))
+    log_trace(string.format(' %s -> %s[multipart] %s', seq, 'POST', media.uploadurl))
     local result, resp_headers
     result, resp_headers = LrHttp.postMultipart(media.uploadurl, content)
     local status_code = "999"
@@ -1241,7 +1242,7 @@ local function handleIndirectUpload(contentPath, urlname, media, file_size, mime
       end
     end
     if status_code >= "200" and status_code <= "299" then
-      logger:trace(string.format(' %s <- %s', seq, status_code))
+      log_trace(string.format(' %s <- %s', seq, status_code))
       return PhotoDeckAPI.updatePhoto(media.uuid, urlname, {
         contentUploadLocation = media.uploadlocation,
         contentFileName = media.filename,
@@ -1254,9 +1255,9 @@ local function handleIndirectUpload(contentPath, urlname, media, file_size, mime
       error_msg = LOC("$$$/PhotoDeck/API/HTTPError=HTTP error ^1", status_code)
     end
     if result then
-      logger:error(string.format(' %s <- %s: %s %s\n%s', seq, status_code, error_msg, printTable(resp_headers), result))
+      log_error(string.format(' %s <- %s: %s %s\n%s', seq, status_code, error_msg, printTable(resp_headers), result))
     else
-      logger:error(string.format(' %s <- %s: %s %s', seq, status_code, error_msg, printTable(resp_headers)))
+      log_error(string.format(' %s <- %s: %s %s', seq, status_code, error_msg, printTable(resp_headers)))
     end
 
   else
@@ -1268,7 +1269,7 @@ local function handleIndirectUpload(contentPath, urlname, media, file_size, mime
 end
 
 function PhotoDeckAPI.uploadPhoto(urlname, attributes)
-  logger:trace(string.format('PhotoDeckAPI.uploadPhoto("%s", %s)', urlname, printTable(attributes)))
+  log_trace(string.format('PhotoDeckAPI.uploadPhoto("%s", %s)', urlname, printTable(attributes)))
   local url = '/medias.xml'
   local content = {}
   local upload_location_requested = false
@@ -1286,13 +1287,13 @@ function PhotoDeckAPI.uploadPhoto(urlname, attributes)
       table.insert(content, { name = k, value = v })
     end
   end
-  --logger:trace('PhotoDeckAPI.uploadPhoto: ' .. printTable(content))
+  --log_trace('PhotoDeckAPI.uploadPhoto: ' .. printTable(content))
   local response, error_msg = PhotoDeckAPI.requestMultiPart('POST', url, content)
   local media = PhotoDeckAPIXSLT.transform(response, PhotoDeckAPIXSLT.media)
   if not media and not error_msg then
     error_msg = LOC("$$$/PhotoDeck/API/Media/UploadFailed=Upload failed")
   end
-  --logger:trace('PhotoDeckAPI.uploadPhoto: ' .. printTable(media))
+  --log_trace('PhotoDeckAPI.uploadPhoto: ' .. printTable(media))
 
   if media and not error_msg and upload_location_requested then
     media, error_msg = handleIndirectUpload(attributes.contentPath, urlname, media, file_size, mime_type)
@@ -1305,7 +1306,7 @@ function PhotoDeckAPI.uploadPhoto(urlname, attributes)
 end
 
 function PhotoDeckAPI.updatePhoto(photoId, urlname, attributes, handleNotFound)
-  logger:trace(string.format('PhotoDeckAPI.updatePhoto("%s", "%s", %s)', photoId, urlname, printTable(attributes)))
+  log_trace(string.format('PhotoDeckAPI.updatePhoto("%s", "%s", %s)', photoId, urlname, printTable(attributes)))
   local url = '/medias/' .. photoId .. '.xml'
   local onerror = {}
   if handleNotFound then
@@ -1333,7 +1334,7 @@ function PhotoDeckAPI.updatePhoto(photoId, urlname, attributes, handleNotFound)
       table.insert(content, { name = k, value = v })
     end
   end
-  --logger:trace('PhotoDeckAPI.updatePhoto: ' .. printTable(content))
+  --log_trace('PhotoDeckAPI.updatePhoto: ' .. printTable(content))
   local response, error_msg = PhotoDeckAPI.requestMultiPart('PUT', url, content, onerror)
   if handleNotFound and error_msg == 'Not found' then
     return { notfound = true }, error_msg
@@ -1343,7 +1344,7 @@ function PhotoDeckAPI.updatePhoto(photoId, urlname, attributes, handleNotFound)
   if not media and not error_msg then
     error_msg = LOC("$$$/PhotoDeck/API/Media/UpdateFailed=Update failed")
   end
-  --logger:trace('PhotoDeckAPI.updatePhoto: ' .. printTable(media))
+  --log_trace('PhotoDeckAPI.updatePhoto: ' .. printTable(media))
 
   if media and not error_msg and upload_location_requested then
     media, error_msg = handleIndirectUpload(attributes.contentPath, urlname, media, file_size, mime_type)
@@ -1356,49 +1357,49 @@ function PhotoDeckAPI.updatePhoto(photoId, urlname, attributes, handleNotFound)
 end
 
 function PhotoDeckAPI.deletePhoto(photoId)
-  logger:trace(string.format('PhotoDeckAPI.deletePhoto("%s")', photoId))
+  log_trace(string.format('PhotoDeckAPI.deletePhoto("%s")', photoId))
   local onerror = {}
   onerror["404"] = function() return nil end
   local response, error_msg = PhotoDeckAPI.request('DELETE', '/medias/' .. photoId .. '.xml', nil, onerror)
-  --logger:trace('PhotoDeckAPI.deletePhoto: ' .. response)
+  --log_trace('PhotoDeckAPI.deletePhoto: ' .. response)
   return response, error_msg
 end
 
 function PhotoDeckAPI.deletePhotos(photoIds)
-  logger:trace(string.format('PhotoDeckAPI.deletePhotos(<photo ids)'))
+  log_trace(string.format('PhotoDeckAPI.deletePhotos(<photo ids)'))
   local url = '/medias/batch_update.xml'
   local content = { { name = 'medias[on]', value = 'medias' },
                     { name = 'medias[medias]', value = table.concat(photoIds, ',') },
                     { name = 'medias[delete]', value = '1' } }
   local response, error_msg = PhotoDeckAPI.requestMultiPart('PUT', url, content)
-  --logger:trace('PhotoDeckAPI.deletePhotos: ' .. response)
+  --log_trace('PhotoDeckAPI.deletePhotos: ' .. response)
   return response, error_msg
 end
 
 function PhotoDeckAPI.unpublishPhoto(photoId, galleryId)
-  logger:trace(string.format('PhotoDeckAPI.unpublishPhoto("%s", "%s")', photoId, galleryId))
+  log_trace(string.format('PhotoDeckAPI.unpublishPhoto("%s", "%s")', photoId, galleryId))
   local url = '/medias/' .. photoId .. '.xml'
   local content = { { name = 'media[unpublish_from_galleries]', value = galleryId } }
   local onerror = {}
   onerror["404"] = function() return nil end
   local response, error_msg = PhotoDeckAPI.requestMultiPart('PUT', url, content, onerror)
-  --logger:trace('PhotoDeckAPI.unpublishPhoto: ' .. response)
+  --log_trace('PhotoDeckAPI.unpublishPhoto: ' .. response)
   return response, error_msg
 end
 
 function PhotoDeckAPI.unpublishPhotos(photoIds, galleryId)
-  logger:trace(string.format('PhotoDeckAPI.unpublishPhotos(<photo ids>, "%s")', galleryId))
+  log_trace(string.format('PhotoDeckAPI.unpublishPhotos(<photo ids>, "%s")', galleryId))
   local url = '/medias/batch_update.xml'
   local content = { { name = 'medias[on]', value = 'medias' },
                     { name = 'medias[medias]', value = table.concat(photoIds, ',') },
                     { name = 'medias[unpublish_from_galleries]', value = galleryId } }
   local response, error_msg = PhotoDeckAPI.requestMultiPart('PUT', url, content)
-  --logger:trace('PhotoDeckAPI.unpublishPhotos: ' .. response)
+  --log_trace('PhotoDeckAPI.unpublishPhotos: ' .. response)
   return response, error_msg
 end
 
 function PhotoDeckAPI.galleryDisplayStyles(urlname)
-  logger:trace(string.format('PhotoDeckAPI.galleryDisplayStyles("%s")', urlname))
+  log_trace(string.format('PhotoDeckAPI.galleryDisplayStyles("%s")', urlname))
   local cacheKey = 'gallery_display_styles/' .. urlname
   local result = PhotoDeckAPICache[cacheKey]
   local response, error_msg = nil
@@ -1418,22 +1419,22 @@ function PhotoDeckAPI.galleryDisplayStyles(urlname)
     if not error_msg then
       PhotoDeckAPICache[cacheKey] = result
     end
-    --logger:trace('PhotoDeckAPI.galleryDisplayStyles: ' .. printTable(result))
+    --log_trace('PhotoDeckAPI.galleryDisplayStyles: ' .. printTable(result))
   end
   return result, error_msg
 end
 
 function PhotoDeckAPI.deleteGallery(urlname, galleryId)
-  logger:trace(string.format('PhotoDeckAPI.deleteGallery("%s", "%s")', urlname, galleryId))
+  log_trace(string.format('PhotoDeckAPI.deleteGallery("%s", "%s")', urlname, galleryId))
   local url = '/websites/' .. urlname .. '/galleries/' .. galleryId .. '.xml'
-  --logger:trace(url)
+  --log_trace(url)
   local response, error_msg = PhotoDeckAPI.request('DELETE', url)
-  --logger:trace('PhotoDeckAPI.deleteGallery: ' .. response)
+  --log_trace('PhotoDeckAPI.deleteGallery: ' .. response)
   return response, error_msg
 end
 
 function PhotoDeckAPI.reorderGallery(urlname, galleryId, mediasIds)
-  logger:trace(string.format('PhotoDeckAPI.reorderGallery("%s", "%s", %s)', urlname, galleryId, printTable(mediasIds)))
+  log_trace(string.format('PhotoDeckAPI.reorderGallery("%s", "%s", %s)', urlname, galleryId, printTable(mediasIds)))
 
   local seq = ""
   for i, uuid in pairs(mediasIds) do
@@ -1443,7 +1444,7 @@ function PhotoDeckAPI.reorderGallery(urlname, galleryId, mediasIds)
       seq = seq .. "," .. uuid
     end
   end
-  logger:trace(seq)
+  log_trace(seq)
 
   local galleryInfo = {}
   galleryInfo['gallery[content_order]'] = 'manual-last'

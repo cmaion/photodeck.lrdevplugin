@@ -1,6 +1,7 @@
 local LrXml = import 'LrXml'
 local logger = import 'LrLogger'( 'PhotoDeckPublishLightroomPlugin' )
 logger:enable('logfile')
+local log_trace = logger:quick('trace')
 
 local xsltheader = [====[
 <xsl:stylesheet version="1.0"
@@ -218,15 +219,15 @@ PhotoDeckAPIXSLT.transform = function(xmlstring, xslt)
     xmlstring, _ = string.gsub(xmlstring, '%]====%]', '')
 
     -- parse & load
-    --logger:trace("XML: " .. xmlstring)
+    --log_trace("XML: " .. xmlstring)
     local xml = LrXml.parseXml(xmlstring)
     local luastring = xml:transform(xslt)
-    --logger:trace("LUA: " .. luastring)
+    --log_trace("LUA: " .. luastring)
     if luastring ~= '' then
       local f = assert(loadstring(luastring))
       return f()
     else
-      logger:trace(xmlstring)
+      log_trace(xmlstring)
     end
   end
 end
