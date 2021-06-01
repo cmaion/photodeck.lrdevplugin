@@ -1,3 +1,7 @@
+0.17.3 - 01/06/2021
+-------------------
+New PhotoDeck logo
+
 0.17.2 - 21/05/2021
 -------------------
 Implement new requests rate limits API. This should improve upload speed for smaller files
