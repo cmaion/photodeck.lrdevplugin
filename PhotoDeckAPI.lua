@@ -18,8 +18,6 @@ local log_info, log_trace, log_error = logger:quick('info', 'trace', 'error')
 local PhotoDeckAPI_BASEURL = 'https://api.photodeck.com'
 local PhotoDeckMY_BASEURL = 'https://my.photodeck.com'
 
-local PhotoDeckAPI_SESSIONCOOKIE = '_ficelle_session'
-
 local PhotoDeckAPI_KEY = ''
 local PhotoDeckAPI_SECRET = ''
 
@@ -35,7 +33,6 @@ local PhotoDeckAPI = {
   loggedin = false,
   otpEnabled = false,
   otp = nil,
-  sessionCookie = nil,
   canSynchronize = true
 }
 
@@ -75,12 +72,6 @@ local function auth_headers(method, uri, querystring)
     local authorization = 'Basic ' .. LrStringUtils.encodeBase64(PhotoDeckAPI.username ..
       ':' .. password)
     table.insert(headers, { field = 'Authorization',  value = authorization })
-
-  elseif PhotoDeckAPI.sessionCookie then
-    -- already logged in, inject last known session cookie.
-    -- NOTE: Lightroom usually does this by itself, but some installations seems to loose cookies between calls. So we are doing this manually.
-    local cookie = PhotoDeckAPI_SESSIONCOOKIE .. '=' .. PhotoDeckAPI.sessionCookie
-    table.insert(headers, { field = 'Cookie',  value = cookie })
   end
 
   return headers
@@ -320,7 +311,6 @@ local function handle_response(seq, response, resp_headers, onerror)
     --end
     if status_code == "401" then
       PhotoDeckAPI.loggedin = false
-      PhotoDeckAPI.sessionCookie = nil
       if error_from_xml then
         if error_from_xml.authmethod == 'basic:password+otp' then
           if PhotoDeckAPI.otpEnabled then
@@ -365,7 +355,6 @@ local function handle_response(seq, response, resp_headers, onerror)
     end
     if status_code == "999" then
       PhotoDeckAPI.loggedin = false
-      PhotoDeckAPI.sessionCookie = nil
       log_error(string.format(' %s <- %s [%s]: %s %s', seq, status_code, request_id, error_msg, printTable(resp_headers)))
     else
       log_error(string.format(' %s <- %s [%s]: %s', seq, status_code, request_id, error_msg))
@@ -373,14 +362,6 @@ local function handle_response(seq, response, resp_headers, onerror)
   else
     PhotoDeckAPI.loggedin = true
     log_trace(string.format(' %s <- %s [%s]', seq, status_code, request_id))
-
-    -- Try to extract session cookie. We will reinject it later, as it seems that some Lightroom installations loose cookies between calls.
-    for _, set_cookie in ipairs(PhotoDeckUtils.filter(resp_headers, function(v) return isTable(v) and v.field == 'set-cookie' end)) do
-      local parsed_cookies = LrHttp.parseCookie(set_cookie.value, false)
-      if parsed_cookies[PhotoDeckAPI_SESSIONCOOKIE] then
-        PhotoDeckAPI.sessionCookie = parsed_cookies[PhotoDeckAPI_SESSIONCOOKIE]
-      end
-    end
   end
 
   return response, error_msg
@@ -497,7 +478,6 @@ function PhotoDeckAPI.logout()
   log_trace('PhotoDeckAPI.logout()')
   local response, error_msg = PhotoDeckAPI.request('GET', '/logout.xml')
   PhotoDeckAPI.loggedin = false
-  PhotoDeckAPI.sessionCookie = nil
   return response, error_msg
 end
 
@@ -507,7 +487,6 @@ function PhotoDeckAPI.whoami()
   local result = PhotoDeckAPIXSLT.transform(response, PhotoDeckAPIXSLT.user)
   if not result or not result.email or result.email == '' then
     PhotoDeckAPI.loggedin = false
-    PhotoDeckAPI.sessionCookie = nil
   end
   -- log_trace(printTable(result))
   return result, error_msg
@@ -532,7 +511,6 @@ function PhotoDeckAPI.websites()
     end
     if error_msg then
       PhotoDeckAPI.loggedin = false
-      PhotoDeckAPI.sessionCookie = nil
     else
       PhotoDeckAPICache[cacheKey] = result
     end

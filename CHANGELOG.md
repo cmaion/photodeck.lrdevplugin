@@ -1,3 +1,7 @@
+0.17.4 - 13/09/2021
+-------------------
+Remove builtin session cookie management
+
 0.17.3 - 01/06/2021
 -------------------
 New PhotoDeck logo
