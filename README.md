@@ -10,7 +10,7 @@ Installation
 Either
 
 ```
-git clone https://github.com/willthames/photodeck.lrdevplugin
+git clone https://github.com/cmaion/photodeck.lrdevplugin
 ```
 
 Or use the download zip button to download a zip file, extract to a location of
