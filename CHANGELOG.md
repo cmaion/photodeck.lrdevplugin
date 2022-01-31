@@ -1,3 +1,6 @@
+-------------------
+Add a note to explain PhotoDeck vs Lightroom watermarking
+
 0.17.4 - 13/09/2021
 -------------------
 Remove builtin session cookie management

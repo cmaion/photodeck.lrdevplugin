@@ -24,6 +24,8 @@
 "$$$/PhotoDeck/PublishOptionsDialog/SynchronizeGalleries/ConfirmSubtitle=Le contenu des galeries n'est actuellement pas importé."
 "$$$/PhotoDeck/PublishOptionsDialog/SynchronizeGalleries/ProceedAction=Procéder"
 "$$$/PhotoDeck/PublishOptionsDialog/SynchronizeGalleries/CancelAction=Annuler"
+"$$$/PhotoDeck/PublishOptionsDialog/WatermarkingTitle=Filigrane :"
+"$$$/PhotoDeck/PublishOptionsDialog/WatermarkingNote=le filigrane sélectionné comme défaut dans l'importeur PhotoDeck sera appliqué aux images présentées sur votre site web. Veuillez noter que le filigrane propre à Lightroom (ci-dessous), si sélectionné, sera appliqué avant l'import vers PhotoDeck et sera ainsi visibile également sur vos images hautes définitions."
 "$$$/PhotoDeck/InitialSynchronizationDialog/Title=Souhaitez-vous importer vos galeries PhotoDeck existantes dans Lightroom maintenant ?"
 "$$$/PhotoDeck/InitialSynchronizationDialog/ConfirmSubtitle=Le contenu des galeries n'est actuellement pas importé.^n^nVous pouvez également importer (ou ré-importer) vos galeries PhotoDeck ultérieurement, depuis les paramètres du service de publication."
 "$$$/PhotoDeck/InitialSynchronizationDialog/ProceedAction=Oui, procéder maintenant"

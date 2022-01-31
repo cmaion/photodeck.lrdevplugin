@@ -389,6 +389,21 @@ function PhotoDeckDialogs.sectionsForTopOfDialog(f, propertyTable)
         fill_horizontal = 1,
         height_in_lines = 1,
       },
+    },
+
+    f:row {
+      margin_top = 10,
+      f:static_text {
+        title = LOC "$$$/PhotoDeck/PublishOptionsDialog/WatermarkingTitle=Watermark: ",
+        font = '<system/small/bold>',
+      },
+      f:static_text {
+        title = LOC "$$$/PhotoDeck/PublishOptionsDialog/WatermarkingNote=the watermark set as default watermark in PhotoDeck's uploder will be applied to the images shown on your website. Note that Lightroom's own watermark feature (below), if selected, is applied before the upload to PhotoDeck, and therefore will be visible also on high-res images.",
+        font = '<system/small>',
+        fill_horizontal = 1,
+        height_in_lines = -1,
+        width_in_chars = 40
+      }
     }
   }
 
