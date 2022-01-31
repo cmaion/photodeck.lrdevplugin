@@ -59,6 +59,7 @@ publishServiceProvider.exportPresetFields = {
   { key = 'apiKey', default = "" },
   { key = 'apiSecret', default = "" },
   { key = 'websiteChosen', default = "" },
+  { key = 'artistChosen', default = nil },
   { key = 'uploadOnRepublish', default = false }
 }
 
@@ -165,6 +166,7 @@ function publishServiceProvider.processRenderedPhotos( functionContext, exportCo
   local gallery = nil
   local website
   local websiteuuid = nil
+  local artistuuid = exportSettings.artistChosen
 
   if isPublish then
     website, error_msg = PhotoDeckAPI.website(urlname)
@@ -268,6 +270,7 @@ function publishServiceProvider.processRenderedPhotos( functionContext, exportCo
           end
 
           if not photoAlreadyPublished then
+            photoAttributes.artistId = artistuuid
             upload, error_msg, cancel_next_uploads = PhotoDeckAPI.uploadPhoto(urlname, photoAttributes)
           end
         end

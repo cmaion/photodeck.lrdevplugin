@@ -59,6 +59,18 @@ return t
   </xsl:template>
 ]=====] .. xsltfooter
 
+PhotoDeckAPIXSLT.artists = xsltheader .. [=====[
+  <xsl:template match='/reply/artists'>
+local t = {}
+    <xsl:for-each select='artist'>
+t["<xsl:value-of select='uuid'/>"] = {
+     name = "<xsl:value-of select='name'/>",
+}
+    </xsl:for-each>
+return t
+  </xsl:template>
+]=====] .. xsltfooter
+
 PhotoDeckAPIXSLT.galleries = xsltheader .. [=====[
   <xsl:template match='/reply/galleries'>
 LrDate = import 'LrDate'

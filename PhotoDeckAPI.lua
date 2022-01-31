@@ -531,6 +531,33 @@ function PhotoDeckAPI.website(urlname)
   return website, error_msg
 end
 
+function PhotoDeckAPI.artists()
+  log_trace('PhotoDeckAPI.artists()')
+  local cacheKey = 'artists/' .. PhotoDeckAPI.username
+  local result = PhotoDeckAPICache[cacheKey]
+  local response, error_msg = nil
+  if not result then
+    response, error_msg = PhotoDeckAPI.request('GET', '/artists.xml', { view = 'details' })
+    result = PhotoDeckAPIXSLT.transform(response, PhotoDeckAPIXSLT.artists)
+    if not error_msg then
+      local artists_count = 0
+      if result then
+        for _ in pairs(result) do artists_count = artists_count + 1 end
+      end
+      if artists_count == 0 then
+        error_msg = LOC("$$$/PhotoDeck/API/Artists/NotFound=No media library found")
+      end
+    end
+    if error_msg then
+      PhotoDeckAPI.loggedin = false
+    else
+      PhotoDeckAPICache[cacheKey] = result
+    end
+    -- log_trace(printTable(result))
+  end
+  return result, error_msg
+end
+
 function PhotoDeckAPI.galleries(urlname)
   log_trace(string.format('PhotoDeckAPI.galleries("%s")', urlname))
   local galleries
@@ -1346,6 +1373,9 @@ function PhotoDeckAPI.uploadPhoto(urlname, attributes)
   local mime_type
   if attributes.contentPath then
     content, upload_location_requested, file_size, mime_type = buildFileUploadParams(attributes.contentPath, attributes.lrPhoto)
+  end
+  if attributes.artistId then
+    table.insert(content, { name = 'artist_id', value = attributes.artistId })
   end
   if attributes.publishToGallery then
     table.insert(content, { name = 'media[publish_to_galleries]', value = attributes.publishToGallery })

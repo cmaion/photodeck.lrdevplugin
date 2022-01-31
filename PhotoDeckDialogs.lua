@@ -16,6 +16,12 @@ local function updateWebsiteName(propertyTable, key, value)
 end
 
 
+-- Updates the media library name in the plugin settings
+local function updateArtistName(propertyTable, key, value)
+  propertyTable.artistName = propertyTable.artists[value].name
+end
+
+
 -- Ping PhotoDeck and show result in plugin settings
 local function ping(propertyTable)
   propertyTable.connectionStatus = LOC "$$$/PhotoDeck/ConnectionStatus/Connecting=Connecting to PhotoDeck^."
@@ -77,6 +83,36 @@ local function login(propertyTable)
         end
         propertyTable.multipleWebsites = websitesCount > 1
         updateWebsiteName(propertyTable, nil, propertyTable.websiteChosen)
+      end
+
+      -- get available media libraries
+      local artists
+      artists, error_msg = PhotoDeckAPI.artists()
+      if error_msg then
+        propertyTable.connectionStatus = LOC("$$$/PhotoDeck/ConnectionStatus/FailedLoadingArtist=Couldn't get your media library: ^1", error_msg)
+        propertyTable.loggedin = PhotoDeckAPI.loggedin
+      else
+        propertyTable.artists = artists
+        propertyTable.artistChoices = {}
+        local artistsCount = 0
+        local firstArtist = nil
+        local foundCurrent = false
+        for k, v in pairs(propertyTable.artists) do
+          artistsCount = artistsCount + 1
+          if not firstArtist then
+            firstArtist = k
+          end
+          if k == propertyTable.artistChosen then
+            foundCurrent = true
+          end
+          table.insert(propertyTable.artistChoices, { title = v.name, value = k })
+        end
+        if not foundCurrent then
+          -- automatically select first artist
+          propertyTable.artistChosen = firstArtist
+        end
+        propertyTable.multipleArtists = artistsCount > 1
+        updateArtistName(propertyTable, nil, propertyTable.artistChosen)
       end
 
       -- show synchronization message if in progress
@@ -176,6 +212,25 @@ local function chooseWebsite(propertyTable)
 end
 
 
+-- What happens when user clicks "Change media library" in plugin settings
+local function chooseArtist(propertyTable)
+  local f = LrView.osFactory()
+  local c = f:row {
+    spacing = f:dialog_spacing(),
+    bind_to_object = propertyTable,
+    f:popup_menu {
+      items = LrView.bind 'artistChoices',
+      value = LrView.bind 'artistChosen',
+    },
+  }
+  local result = LrDialogs.presentModalDialog({
+    title = LOC "$$$/PhotoDeck/ArtistsDialog/Title=PhotoDeck Media libaries",
+    contents = c,
+  })
+  return propertyTable
+end
+
+
 -- Prevent the plugin settings dialog to be saved, until logged in
 local function updateCantExportBecause(propertyTable)
   if not propertyTable.loggedin then
@@ -190,9 +245,12 @@ end
 function PhotoDeckDialogs.startDialog(propertyTable)
   propertyTable.loggedin = false
   propertyTable.websiteChoices = {}
+  propertyTable.artistChoices = {}
   propertyTable.galleryDisplayStyles = {}
   propertyTable.multipleWebsites = false
   propertyTable.websiteName = ''
+  propertyTable.multipleArtists = false
+  propertyTable.artistName = ''
   propertyTable.canSynchronize = PhotoDeckAPI.canSynchronize
   propertyTable.synchronizeGalleriesResult = ''
 
@@ -208,6 +266,7 @@ function PhotoDeckDialogs.startDialog(propertyTable)
   updateCantExportBecause(propertyTable)
 
   propertyTable:addObserver('websiteChosen', updateWebsiteName)
+  propertyTable:addObserver('artistChosen', updateArtistName)
 
   local keysAreValid = PhotoDeckAPI.hasDistributionKeys or (
     propertyTable.apiKey and propertyTable.apiKey ~= '' and
@@ -341,6 +400,7 @@ function PhotoDeckDialogs.sectionsForTopOfDialog(f, propertyTable)
             visible = LrBinding.andAllKeys('loggedin'),
             title = LrView.bind 'websiteName',
             width = 300,
+            font = '<system/small/bold>',
           }
         },
       },
@@ -357,6 +417,51 @@ function PhotoDeckDialogs.sectionsForTopOfDialog(f, propertyTable)
   }
   local publishSettings = {
     title = LOC "$$$/PhotoDeck/PublishOptionsDialog/Title=PhotoDeck Publish options",
+
+    f:row {
+      bind_to_object = propertyTable,
+      f:column {
+        f:row {
+          f:static_text {
+            visible = LrBinding.andAllKeys('loggedin'),
+            title = LOC "$$$/PhotoDeck/PublishOptionsDialog/Artist=Media library:",
+            width = LrView.share "user_label_width",
+            alignment = 'right'
+          },
+          f:static_text {
+            visible = LrBinding.andAllKeys('loggedin'),
+            title = LrView.bind 'artistName',
+            width = 300,
+            font = '<system/small/bold>',
+          }
+        },
+      },
+
+      f:column {
+        f:push_button {
+          title = LOC "$$$/PhotoDeck/PublishOptionsDialog/ArtistChangeAction=Change",
+          visible = LrBinding.andAllKeys('loggedin'),
+          enabled = LrBinding.andAllKeys('loggedin', 'multipleArtists'),
+          action = function() propertyTable = chooseArtist(propertyTable) end,
+        },
+      },
+    },
+
+    f:row {
+      margin_top = 10,
+      f:static_text {
+        title = LOC "$$$/PhotoDeck/PublishOptionsDialog/WatermarkingTitle=Watermark: ",
+        width = LrView.share "user_label_width",
+        alignment = 'right'
+      },
+      f:static_text {
+        title = LOC "$$$/PhotoDeck/PublishOptionsDialog/WatermarkingNote=the watermark set as default watermark in PhotoDeck's uploder will be applied to the images shown on your website. Note that Lightroom's own watermark feature (below), if selected, is applied before the upload to PhotoDeck, and therefore will be visible also on high-res images.",
+        font = '<system/small>',
+        fill_horizontal = 1,
+        height_in_lines = -1,
+        width_in_chars = 40
+      }
+    },
 
     f:row {
       bind_to_object = propertyTable,
@@ -389,21 +494,6 @@ function PhotoDeckDialogs.sectionsForTopOfDialog(f, propertyTable)
         fill_horizontal = 1,
         height_in_lines = 1,
       },
-    },
-
-    f:row {
-      margin_top = 10,
-      f:static_text {
-        title = LOC "$$$/PhotoDeck/PublishOptionsDialog/WatermarkingTitle=Watermark: ",
-        font = '<system/small/bold>',
-      },
-      f:static_text {
-        title = LOC "$$$/PhotoDeck/PublishOptionsDialog/WatermarkingNote=the watermark set as default watermark in PhotoDeck's uploder will be applied to the images shown on your website. Note that Lightroom's own watermark feature (below), if selected, is applied before the upload to PhotoDeck, and therefore will be visible also on high-res images.",
-        font = '<system/small>',
-        fill_horizontal = 1,
-        height_in_lines = -1,
-        width_in_chars = 40
-      }
     }
   }
 

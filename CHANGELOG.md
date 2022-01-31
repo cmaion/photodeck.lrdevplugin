@@ -1,5 +1,7 @@
+0.17.5 - 31/01/2022
 -------------------
 Add a note to explain PhotoDeck vs Lightroom watermarking
+Add support for multiple media libraries
 
 0.17.4 - 13/09/2021
 -------------------
