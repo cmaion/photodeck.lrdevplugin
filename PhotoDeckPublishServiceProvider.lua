@@ -15,7 +15,7 @@ local publishServiceProvider = {}
 
 -- General plugin configuration for export & publish operations
 publishServiceProvider.hideSections = { 'exportLocation' }
-publishServiceProvider.allowFileFormats = { 'JPEG', 'TIFF', 'Original' }
+publishServiceProvider.allowFileFormats = { 'JPEG', 'TIFF', 'ORIGINAL' }
 publishServiceProvider.hidePrintResolution = true
 
 
