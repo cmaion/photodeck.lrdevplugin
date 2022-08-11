@@ -120,26 +120,73 @@ local function getPhotoDeckPhotoIdsStoredInCatalog(photo)
   return res
 end
 
-local function storePhotoDeckPhotoIdsInCatalog(catalog, photo, websiteuuid, photouuid)
+local function catalogKeyForPhotoDeckPhotoId(photo, websiteuuid)
+  local catalogKey = websiteuuid
+  if photo:getRawMetadata('isVirtualCopy') then
+    -- virtual copy shares the same metadata catalog entries it seems, so we use a different key to store the PhotoDeck ID
+    catalogKey = catalogKey .. "/" .. tostring(photo.localIdentifier)
+  end
+  return catalogKey
+end
+
+local function storePhotoDeckPhotoIdInCatalog(photo, websiteuuid, photouuid)
   local curr = getPhotoDeckPhotoIdsStoredInCatalog(photo)
-  curr[websiteuuid] = photouuid
+  local catalogKey = catalogKeyForPhotoDeckPhotoId(photo, websiteuuid)
+  curr[catalogKey] = photouuid
   local str = ''
   for k, v in pairs(curr) do
-    if k and k ~= '' then
-      str = str .. tostring(k) .. ':' .. tostring(v) .. ' '
-    else
-      str = str .. tostring(v) .. ' '
+    if v then
+      if k and k ~= '' then
+        str = str .. tostring(k) .. ':' .. tostring(v) .. ' '
+      else
+        str = str .. tostring(v) .. ' '
+      end
     end
+  end
+  if str == '' then
+    str = nil
   end
 
   local prev = photo:getPropertyForPlugin(_PLUGIN, "photoId")
   if prev ~= str then
-    catalog:withWriteAccessDo( "publish", function( context )
-      photo:setPropertyForPlugin(_PLUGIN, "photoId", str)
-    end)
+    photo:setPropertyForPlugin(_PLUGIN, "photoId", str)
   end
 end
 
+local function getPhotoDeckPhotoIdInCatalogOrLock(catalog, rendition, photo, websiteuuid, ignorePhotoId)
+  local photoId = nil
+  local locked = false
+  local catalogKey = catalogKeyForPhotoDeckPhotoId(photo, websiteuuid)
+
+  repeat -- Avoid race condition while importing the same photo in multiple galleries in parallel
+    catalog:withPrivateWriteAccessDo(function(context)
+      -- NOTE: we are using rendition.publishedPhotoId only as a last resort, as the photo might have seen it's UUID change in another gallery (e.g., following a manual deletion directly within PhotoDeck, followed by a publication in another gallery) -- rendition.publishedPhotoId might thus be outdated
+      local photoIds = getPhotoDeckPhotoIdsStoredInCatalog(photo)
+      if photo:getRawMetadata('isVirtualCopy') then
+        photoId = photoIds[catalogKey] or rendition.publishedPhotoId
+      else
+        photoId = photoIds[catalogKey] or photoIds[''] or rendition.publishedPhotoId
+      end
+
+      if photoId == ignorePhotoId then
+        photoId = nil
+      end
+
+      if not photoId then
+        -- update catalog with a temporary "lock" on this photo so that a concurrent publish waits for us to release the lock
+        storePhotoDeckPhotoIdInCatalog(photo, websiteuuid, 'lock')
+      end
+    end, { timeout = 120 })
+
+    locked = photoId == 'lock'
+    if locked then
+      log_trace(string.format('       ** Photo is locked, sleeping for 1 second'))
+      LrTasks.sleep(1)
+    end
+  until not locked
+
+  return photoId
+end
 
 function publishServiceProvider.processRenderedPhotos( functionContext, exportContext )
   log_trace('publishServiceProvider.processRenderedPhotos')
@@ -211,31 +258,8 @@ function publishServiceProvider.processRenderedPhotos( functionContext, exportCo
     -- Get next photo.
     local photo = rendition.photo
     local photoId = nil
-    local catalogKey = nil
 
     if not rendition.wasSkipped and not cancel_next_uploads then
-      -- See if we previously uploaded this photo.
-      if isPublish then
-        local isVirtualCopy = photo:getRawMetadata('isVirtualCopy')
-        if isVirtualCopy then
-          -- virtual copy shares the same metadata catalog entries it seems, so we use a different key to store the PhotoDeck ID
-          catalogKey = websiteuuid .. "/" .. tostring(photo.localIdentifier)
-        else
-          catalogKey = websiteuuid
-        end
-
-        -- get photo ID from previous upload (either in this gallery or another one)
-        -- NOTE: we are using rendition.publishedPhotoId only as a last resort, as the photo might have seen it's UUID change in another gallery (e.g., following a manual deletion directly within PhotoDeck, followed by a publication in another gallery) -- rendition.publishedPhotoId might thus be outdated
-        catalog:withReadAccessDo( function()
-          local photoIds = getPhotoDeckPhotoIdsStoredInCatalog(photo)
-          if isVirtualCopy then
-            photoId = photoIds[catalogKey] or rendition.publishedPhotoId
-          else
-            photoId = photoIds[catalogKey] or photoIds[''] or rendition.publishedPhotoId
-          end
-        end)
-      end
-
       local success, pathOrMessage = rendition:waitForRender()
       -- Update progress scope again once we've got rendered photo.
       progressScope:setPortionComplete( ( i - 0.5 ) / nPhotos )
@@ -243,6 +267,11 @@ function publishServiceProvider.processRenderedPhotos( functionContext, exportCo
       if progressScope:isCanceled() then break end
       if success then
         error_msg = nil
+
+        -- Check if we previously uploaded this photo: get photo ID from previous upload (either in this gallery or another one)
+        if isPublish then
+          photoId = getPhotoDeckPhotoIdInCatalogOrLock(catalog, rendition, photo, websiteuuid)
+        end
 
         local photoAlreadyPublished = not not photoId
 
@@ -260,12 +289,19 @@ function publishServiceProvider.processRenderedPhotos( functionContext, exportCo
           photoAttributes.lrPhoto = photo
 
           -- Upload or replace/update the photo.
-          if photoAlreadyPublished then
+          local update_done = false
+          while photoAlreadyPublished and not update_done do
             upload, error_msg, cancel_next_uploads = PhotoDeckAPI.updatePhoto(photoId, urlname, photoAttributes, true)
             if upload and upload.notfound then
               -- Not found error on PhotoDeck. Assume that the photo is gone and that we need to upload it again.
-              photoAlreadyPublished = false
-              photoAttributes.contentPath = pathOrMessage
+              -- Note: another parallel publish job might do the same, so we need to deal with a potential race condition: if another job starts uploading before us, we need to wait for the new photo ID.
+              photoId = getPhotoDeckPhotoIdInCatalogOrLock(catalog, rendition, photo, websiteuuid, photoId)
+              photoAlreadyPublished = not not photoId
+              if not photoAlreadyPublished then
+                photoAttributes.contentPath = pathOrMessage
+              end
+            else
+              update_done = true
             end
           end
 
@@ -276,37 +312,40 @@ function publishServiceProvider.processRenderedPhotos( functionContext, exportCo
         end
 
         if not error_msg and upload and upload.uuid and upload.uuid ~= "" then
-          if upload.filename and upload.filename ~= "" and upload.filename ~= photo:getPropertyForPlugin(_PLUGIN, "fileName") then
-            -- Store PhotoDeck file name
-            catalog:withPrivateWriteAccessDo(function(context)
+          catalog:withPrivateWriteAccessDo(function(context)
+            if upload.filename and upload.filename ~= "" and upload.filename ~= photo:getPropertyForPlugin(_PLUGIN, "fileName") then
+              -- Store PhotoDeck file name
               photo:setPropertyForPlugin(_PLUGIN, "fileName", upload.filename)
-            end)
-          end
+            end
 
-          if isPublish then
-            -- Also save the remote photo ID at the LrPhoto level, so that we can find it when publishing in a different gallery
-            storePhotoDeckPhotoIdsInCatalog(catalog, photo, catalogKey, upload.uuid)
+            if isPublish then
+              -- Also save the remote photo ID at the LrPhoto level, so that we can find it when publishing in a different gallery
+              storePhotoDeckPhotoIdInCatalog(photo, websiteuuid, upload.uuid)
 
-            -- Mark all instances of this Lightroom Photo within our published collections as being clean (not edited).
-            -- E.g., when metadata have been changed, re-publishing from any of the published collection will update the PhotoDeck photo for all. No need to re-publish from each published collection.
-            if photoAlreadyPublished then
-              for _, publishedCollection in pairs(photo:getContainedPublishedCollections()) do
-                if publishedCollection:getService().localIdentifier == exportContext.publishService.localIdentifier then
-                  for _, publishedPhotoCopy in pairs(publishedCollection:getPublishedPhotos()) do
-                    if publishedPhotoCopy:getPhoto().localIdentifier == photo.localIdentifier and publishedPhotoCopy:getEditedFlag() then
-                      catalog:withWriteAccessDo("Marking photo as clean", function( context )
+              -- Mark all instances of this Lightroom Photo within our published collections as being clean (not edited).
+              -- E.g., when metadata have been changed, re-publishing from any of the published collection will update the PhotoDeck photo for all. No need to re-publish from each published collection.
+              if photoAlreadyPublished then
+                for _, publishedCollection in pairs(photo:getContainedPublishedCollections()) do
+                  if publishedCollection:getService().localIdentifier == exportContext.publishService.localIdentifier then
+                    for _, publishedPhotoCopy in pairs(publishedCollection:getPublishedPhotos()) do
+                      if publishedPhotoCopy:getPhoto().localIdentifier == photo.localIdentifier and publishedPhotoCopy:getEditedFlag() then
                         publishedPhotoCopy:setEditedFlag(false)
-                      end)
-                      break
+                        break
+                      end
                     end
                   end
                 end
               end
             end
+          end, { timeout = 120 })
 
-            rendition:recordPublishedPhotoId(upload.uuid)
-          end
+          rendition:recordPublishedPhotoId(upload.uuid)
         else
+          if isPublish and not photoId then -- unlock
+            catalog:withPrivateWriteAccessDo(function(context)
+              storePhotoDeckPhotoIdInCatalog(photo, websiteuuid, nil)
+            end, { timeout = 120 })
+          end
           rendition:uploadFailed(error_msg or LOC("$$$/PhotoDeck/ProcessRenderedPhotos/ErrorUploading=Upload failed"))
         end
 
