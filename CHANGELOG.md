@@ -1,3 +1,8 @@
+0.17.6 - 11/08/2022
+-------------------
+Fix race condition when publishing a new photo to multiple galleries in parallel
+Properly allow ORIGINAL file format
+
 0.17.5 - 31/01/2022
 -------------------
 Add a note to explain PhotoDeck vs Lightroom watermarking
