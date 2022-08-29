@@ -1,3 +1,7 @@
+0.17.7 - 29/08/2022
+-------------------
+Fix regression on LR 11.5
+
 0.17.6 - 11/08/2022
 -------------------
 Fix race condition when publishing a new photo to multiple galleries in parallel

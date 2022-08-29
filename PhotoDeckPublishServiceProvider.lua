@@ -321,23 +321,25 @@ function publishServiceProvider.processRenderedPhotos( functionContext, exportCo
             if isPublish then
               -- Also save the remote photo ID at the LrPhoto level, so that we can find it when publishing in a different gallery
               storePhotoDeckPhotoIdInCatalog(photo, websiteuuid, upload.uuid)
+            end
+          end, { timeout = 120 })
 
+          if isPublish and photoAlreadyPublished then
+            catalog:withWriteAccessDo("mark clean", function(context)
               -- Mark all instances of this Lightroom Photo within our published collections as being clean (not edited).
               -- E.g., when metadata have been changed, re-publishing from any of the published collection will update the PhotoDeck photo for all. No need to re-publish from each published collection.
-              if photoAlreadyPublished then
-                for _, publishedCollection in pairs(photo:getContainedPublishedCollections()) do
-                  if publishedCollection:getService().localIdentifier == exportContext.publishService.localIdentifier then
-                    for _, publishedPhotoCopy in pairs(publishedCollection:getPublishedPhotos()) do
-                      if publishedPhotoCopy:getPhoto().localIdentifier == photo.localIdentifier and publishedPhotoCopy:getEditedFlag() then
-                        publishedPhotoCopy:setEditedFlag(false)
-                        break
-                      end
+              for _, publishedCollection in pairs(photo:getContainedPublishedCollections()) do
+                if publishedCollection:getService().localIdentifier == exportContext.publishService.localIdentifier then
+                  for _, publishedPhotoCopy in pairs(publishedCollection:getPublishedPhotos()) do
+                    if publishedPhotoCopy:getPhoto().localIdentifier == photo.localIdentifier and publishedPhotoCopy:getEditedFlag() then
+                      publishedPhotoCopy:setEditedFlag(false)
+                      break
                     end
                   end
                 end
               end
-            end
-          end, { timeout = 120 })
+            end, { timeout = 120 })
+          end
 
           rendition:recordPublishedPhotoId(upload.uuid)
         else
