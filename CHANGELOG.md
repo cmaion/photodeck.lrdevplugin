@@ -1,3 +1,7 @@
+0.17.8 - 04/10/2022
+-------------------
+Fix regression when exporting Photo without using the Publish features
+
 0.17.7 - 29/08/2022
 -------------------
 Fix regression on LR 11.5

@@ -341,7 +341,9 @@ function publishServiceProvider.processRenderedPhotos( functionContext, exportCo
             end, { timeout = 120 })
           end
 
-          rendition:recordPublishedPhotoId(upload.uuid)
+          if isPublish then
+            rendition:recordPublishedPhotoId(upload.uuid)
+          end
         else
           if isPublish and not photoId then -- unlock
             catalog:withPrivateWriteAccessDo(function(context)
