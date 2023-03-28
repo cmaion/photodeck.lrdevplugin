@@ -1288,6 +1288,13 @@ local function buildPhotoInfoFromLrPhoto(photo, updating)
   photoInfo['media[country]'] = photo:getFormattedMetadata("country")
   photoInfo['media[author]'] = photo:getFormattedMetadata("creator")
   photoInfo['media[copyright]'] = photo:getFormattedMetadata("copyright")
+  local location = photo:getFormattedMetadata("locationShown")
+  if not location then
+    location = photo:getFormattedMetadata("locationCreated")
+  end
+  if location and location[1] then
+    photoInfo['media[region]'] = location[1]["WorldRegion"]
+  end
   local artist_rating = photo:getFormattedMetadata("rating")
   if updating and not artist_rating then
     photoInfo['media[delete_artist_rating]'] = 1
