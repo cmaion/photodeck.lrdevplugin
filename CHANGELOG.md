@@ -1,3 +1,5 @@
+Report upload duration to backend
+
 0.17.8 - 04/10/2022
 -------------------
 Fix regression when exporting Photo without using the Publish features

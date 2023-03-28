@@ -1327,6 +1327,7 @@ local function handleIndirectUpload(contentPath, urlname, media, file_size, mime
     --log_trace('PhotoDeckAPI.handleIndirectUpload: ' .. printTable(content))
     local seq = string.format("%5i", math.random(99999))
     log_trace(string.format(' %s -> %s[multipart] %s', seq, 'POST', media.uploadurl))
+    local started_at = LrDate.currentTime()
     local result, resp_headers
     result, resp_headers = LrHttp.postMultipart(media.uploadurl, content)
     local status_code = "999"
@@ -1343,7 +1344,8 @@ local function handleIndirectUpload(contentPath, urlname, media, file_size, mime
         contentUploadLocation = media.uploadlocation,
         contentFileName = media.filename,
         contentFileSize = file_size,
-        contentMimeType = mime_type }, false)
+        contentMimeType = mime_type,
+        uploadDuration = (LrDate.currentTime() - started_at) }, false)
     end
     if status_code == "999" then
       error_msg = LOC("$$$/PhotoDeck/API/NoResponse=No response from network")
@@ -1425,6 +1427,7 @@ function PhotoDeckAPI.updatePhoto(photoId, urlname, attributes, handleNotFound)
     table.insert(content, { name = 'media[content][file_name]', value = attributes.contentFileName })
     table.insert(content, { name = 'media[content][file_size]', value = attributes.contentFileSize })
     table.insert(content, { name = 'media[content][mime_type]', value = attributes.contentMimeType })
+    table.insert(content, { name = 'media[content][upload_duration]', value = attributes.uploadDuration })
   end
   if attributes.publishToGallery then
     table.insert(content, { name = 'media[publish_to_galleries]', value = attributes.publishToGallery })
