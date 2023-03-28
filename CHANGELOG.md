@@ -1,4 +1,7 @@
+0.17.9 - 28/03/2023
+-------------------
 Report upload duration to backend
+Add world region and date/time of capture to Lightroom -> PhotoDeck photo metadata synchronization
 
 0.17.8 - 04/10/2022
 -------------------
