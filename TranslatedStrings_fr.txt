@@ -79,6 +79,7 @@
 "$$$/PhotoDeck/UpdateCollection/ErrorReorderingGallery=Erreur lors de la modification de l'ordre dans la galerie: ^1"
 "$$$/PhotoDeck/API/UnknownError=Erreur inconnue"
 "$$$/PhotoDeck/API/HTTPError=Erreur HTTP ^1"
+"$$$/PhotoDeck/API/FileReadError=Erreur de lecture sur le fichier"
 "$$$/PhotoDeck/API/NoResponse=Pas de réponse du réseau"
 "$$$/PhotoDeck/API/Websites/NotFound=Sites web non trouvés"
 "$$$/PhotoDeck/API/Website/NotFound=Site web non trouvé"

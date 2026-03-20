@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## 0.18.0 - 20/03/2026
+
+Add support for new upload endpoints
+
 ## 0.17.9 - 28/03/2023
 
 Report upload duration to backend

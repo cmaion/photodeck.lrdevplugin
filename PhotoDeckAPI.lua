@@ -1474,6 +1474,7 @@ local function buildFileUploadParams(contentPath, photo)
     table.insert(content, { name = "media[content][file_name]", value = LrPathUtils.leafName(contentPath) })
     table.insert(content, { name = "media[content][file_size]", value = file_size })
     table.insert(content, { name = "media[content][mime_type]", value = mime_type })
+    table.insert(content, { name = "media[content][capabilities]", value = "raw" })
     upload_location_requested = true
   else
     table.insert(content, { name = "media[content]", filePath = contentPath, fileName = LrPathUtils.leafName(contentPath), contentType = mime_type })
@@ -1485,18 +1486,41 @@ local function handleIndirectUpload(contentPath, urlname, media, file_size, mime
   local error_msg = nil
   local content = {}
   if media.uploadurl and media.uploadurl ~= "" then
-    for k, v in pairs(media.uploadparams) do
-      table.insert(content, { name = k, value = v })
-    end
-    table.insert(content, { name = media.uploadfileparam, filePath = contentPath, fileName = media.filename, contentType = mime_type })
-    --log_trace('PhotoDeckAPI.handleIndirectUpload: ' .. printTable(content))
     local seq = string.format("%5i", math.random(99999))
-    log_trace(string.format(" %s -> %s[multipart] %s", seq, "POST", media.uploadurl))
-    local started_at = LrDate.currentTime()
     local result, resp_headers
-    result, resp_headers = LrHttp.postMultipart(media.uploadurl, content)
+    local started_at
     local status_code = "999"
-    if resp_headers.status then
+
+    if media.uploadfileparam and media.uploadfileparam ~= "" then
+      -- multipart upload
+      for k, v in pairs(media.uploadparams) do
+        table.insert(content, { name = k, value = v })
+      end
+      table.insert(content, { name = media.uploadfileparam, filePath = contentPath, fileName = media.filename, contentType = mime_type })
+      --log_trace('PhotoDeckAPI.handleIndirectUpload: ' .. printTable(content))
+      log_trace(string.format(" %s -> %s[multipart] %s", seq, "POST", media.uploadurl))
+      started_at = LrDate.currentTime()
+      result, resp_headers = LrHttp.postMultipart(media.uploadurl, content)
+    else
+      -- direct upload of raw file
+      log_trace(string.format(" %s -> %s[raw] %s", seq, media.uploadmethod, media.uploadurl))
+      local file = io.open(contentPath, "rb")
+      if file then
+        local headers = {
+          { field = "Content-Length", value = tostring(file_size) },
+          { field = "Content-Type", value = mime_type },
+        }
+        started_at = LrDate.currentTime()
+        result, resp_headers = LrHttp.post(media.uploadurl, function()
+          return file:read(10485760)
+        end, headers, media.uploadmethod, 60, file_size)
+        file:close()
+      else
+        status_code = "900"
+      end
+    end
+
+    if resp_headers and resp_headers.status then
       status_code = tostring(resp_headers.status)
       if status_code == "0" and result == "" then
         status_code = "999"
@@ -1515,6 +1539,8 @@ local function handleIndirectUpload(contentPath, urlname, media, file_size, mime
     end
     if status_code == "999" then
       error_msg = LOC("$$$/PhotoDeck/API/NoResponse=No response from network")
+    elseif status_code == "900" then
+      error_msg = LOC("$$$/PhotoDeck/API/FileReadError=Error reading file")
     else
       error_msg = LOC("$$$/PhotoDeck/API/HTTPError=HTTP error ^1", status_code)
     end
