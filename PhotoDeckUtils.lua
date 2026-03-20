@@ -5,31 +5,31 @@ function PhotoDeckUtils.isType(v, t)
 end
 
 function PhotoDeckUtils.isString(v)
-  return PhotoDeckUtils.isType(v, 'string')
+  return PhotoDeckUtils.isType(v, "string")
 end
 
 function PhotoDeckUtils.isNumber(v)
-  return PhotoDeckUtils.isType(v, 'number')
+  return PhotoDeckUtils.isType(v, "number")
 end
 
 function PhotoDeckUtils.isTable(v)
-  return PhotoDeckUtils.isType(v, 'table')
+  return PhotoDeckUtils.isType(v, "table")
 end
 
 function PhotoDeckUtils.isFunction(v)
-  return PhotoDeckUtils.isType(v, 'function')
+  return PhotoDeckUtils.isType(v, "function")
 end
 
 function PhotoDeckUtils.isBoolean(v)
-  return PhotoDeckUtils.isType(v, 'boolean')
+  return PhotoDeckUtils.isType(v, "boolean")
 end
 
 function PhotoDeckUtils.toString(v)
   if PhotoDeckUtils.isBoolean(v) then
-    return v and 'true' or 'false'
+    return v and "true" or "false"
   end
   if PhotoDeckUtils.isFunction(v) then
-    return 'function'
+    return "function"
   end
   return tostring(v)
 end
@@ -38,13 +38,13 @@ function PhotoDeckUtils.printTable(t)
   if PhotoDeckUtils.isTable(t) then
     local result = {}
     for k, v in pairs(t) do
-      local current = ''
+      local current = ""
       if PhotoDeckUtils.isString(k) then
-        current = current .. k .. ' = '
+        current = current .. k .. " = "
       end
       table.insert(result, current .. PhotoDeckUtils.printTable(v))
     end
-    return '{ ' .. table.concat(result, ', ') .. ' }'
+    return "{ " .. table.concat(result, ", ") .. " }"
   else
     return PhotoDeckUtils.toString(t)
   end
@@ -78,10 +78,10 @@ end
 -- }
 
 function PhotoDeckUtils.printLrTable(t, sep)
-  sep = sep or '\n'
+  sep = sep or "\n"
   local result = {}
   for _, v in ipairs(t) do
-    table.insert(result, v.field .. ' = ' .. v.value)
+    table.insert(result, v.field .. " = " .. v.value)
   end
   return table.concat(result, sep)
 end
@@ -89,28 +89,28 @@ end
 -- parses datetimes formatted as 2015-02-05T21:30:38+01:00
 function PhotoDeckUtils.XMLDateTimeToCoca(s)
   local coca = nil
-  if s and s ~= '' then
-    local year, month, day = string.match(s, '([12][0-9][0-9][0-9])-([0-1][0-9])-([0-3][0-9])')
+  if s and s ~= "" then
+    local year, month, day = string.match(s, "([12][0-9][0-9][0-9])-([0-1][0-9])-([0-3][0-9])")
     year = tonumber(year) or 0
     month = tonumber(month) or 0
     day = tonumber(day) or 0
     if year >= 1000 and month >= 1 and day >= 1 then
-      local hour, min, sec = string.match(s, 'T([0-2][0-9]):([0-6][0-9]):([0-6][0-9])')
+      local hour, min, sec = string.match(s, "T([0-2][0-9]):([0-6][0-9]):([0-6][0-9])")
       hour = tonumber(hour) or 0
       min = tonumber(min) or 0
       sec = tonumber(sec) or 0
-      local tz = string.match(s, 'T[0-2][0-9]:[0-6][0-9]:[0-6][0-9](.*)') or 'Z'
-      if tz == 'Z' then
+      local tz = string.match(s, "T[0-2][0-9]:[0-6][0-9]:[0-6][0-9](.*)") or "Z"
+      if tz == "Z" then
         tz = 0
       else
-        local tz_dir, tz_h, tz_m = string.match(tz, '([+-])([0-2][0-9]):([0-6][0-6])')
+        local tz_dir, tz_h, tz_m = string.match(tz, "([+-])([0-2][0-9]):([0-6][0-6])")
         if tz_dir == nil then
-          tz_dir, tz_h = string.match(tz, '([+-])([0-2][0-9])')
+          tz_dir, tz_h = string.match(tz, "([+-])([0-2][0-9])")
         end
         tz_h = tonumber(tz_h) or 0
         tz_m = tonumber(tz_m) or 0
         tz = ((tz_h * 60) + tz_m) * 60
-        if tz_dir == '-' then
+        if tz_dir == "-" then
           tz = -tz
         end
       end

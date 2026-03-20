@@ -1,7 +1,7 @@
-local LrXml = import 'LrXml'
-local logger = import 'LrLogger'( 'PhotoDeckPublishLightroomPlugin' )
-logger:enable('logfile')
-local log_trace = logger:quick('trace')
+local LrXml = import("LrXml")
+local logger = import("LrLogger")("PhotoDeckPublishLightroomPlugin")
+logger:enable("logfile")
+local log_trace = logger:quick("trace")
 
 local xsltheader = [====[
 <xsl:stylesheet version="1.0"
@@ -16,7 +16,8 @@ local xsltfooter = [====[
 
 local PhotoDeckAPIXSLT = {}
 
-PhotoDeckAPIXSLT.error = xsltheader .. [=====[
+PhotoDeckAPIXSLT.error = xsltheader
+  .. [=====[
   <xsl:template match='/reply'>
 local t = {
   error = [====[<xsl:value-of select='error'/>]====],
@@ -24,15 +25,19 @@ local t = {
 }
 return t
   </xsl:template>
-]=====] .. xsltfooter
+]=====]
+  .. xsltfooter
 
-PhotoDeckAPIXSLT.ping = xsltheader .. [=====[
+PhotoDeckAPIXSLT.ping = xsltheader
+  .. [=====[
   <xsl:template match='/reply'>
 return [====[<xsl:value-of select='message'/>]====]
   </xsl:template>
-]=====] .. xsltfooter
+]=====]
+  .. xsltfooter
 
-PhotoDeckAPIXSLT.user = xsltheader .. [=====[
+PhotoDeckAPIXSLT.user = xsltheader
+  .. [=====[
   <xsl:template match='/reply/user'>
 local t = {
   firstname = [====[<xsl:value-of select='firstname'/>]====],
@@ -41,9 +46,11 @@ local t = {
 }
 return t
   </xsl:template>
-]=====] .. xsltfooter
+]=====]
+  .. xsltfooter
 
-PhotoDeckAPIXSLT.websites = xsltheader .. [=====[
+PhotoDeckAPIXSLT.websites = xsltheader
+  .. [=====[
   <xsl:template match='/reply/websites'>
 local t = {}
     <xsl:for-each select='website'>
@@ -57,9 +64,11 @@ t["<xsl:value-of select='urlname'/>"] = {
     </xsl:for-each>
 return t
   </xsl:template>
-]=====] .. xsltfooter
+]=====]
+  .. xsltfooter
 
-PhotoDeckAPIXSLT.artists = xsltheader .. [=====[
+PhotoDeckAPIXSLT.artists = xsltheader
+  .. [=====[
   <xsl:template match='/reply/artists'>
 local t = {}
     <xsl:for-each select='artist'>
@@ -69,9 +78,11 @@ t["<xsl:value-of select='uuid'/>"] = {
     </xsl:for-each>
 return t
   </xsl:template>
-]=====] .. xsltfooter
+]=====]
+  .. xsltfooter
 
-PhotoDeckAPIXSLT.galleries = xsltheader .. [=====[
+PhotoDeckAPIXSLT.galleries = xsltheader
+  .. [=====[
   <xsl:template match='/reply/galleries'>
 LrDate = import 'LrDate'
 local PhotoDeckUtils = require 'PhotoDeckUtils'
@@ -92,9 +103,11 @@ t["<xsl:value-of select='uuid'/>"] = {
    </xsl:for-each>
 return t
   </xsl:template>
-]=====] .. xsltfooter
+]=====]
+  .. xsltfooter
 
-PhotoDeckAPIXSLT.gallery = xsltheader .. [=====[
+PhotoDeckAPIXSLT.gallery = xsltheader
+  .. [=====[
   <xsl:template match='/reply/gallery'>
 LrDate = import 'LrDate'
 local PhotoDeckUtils = require 'PhotoDeckUtils'
@@ -111,9 +124,11 @@ local t = {
 }
 return t
   </xsl:template>
-]=====] .. xsltfooter
+]=====]
+  .. xsltfooter
 
-PhotoDeckAPIXSLT.media = xsltheader .. [=====[
+PhotoDeckAPIXSLT.media = xsltheader
+  .. [=====[
   <xsl:template match='/reply/media'>
 local t = {
   uuid = "<xsl:value-of select='uuid'/>",
@@ -167,10 +182,11 @@ return t
     </xsl:for-each>
   },
   </xsl:template>
-]=====] .. xsltfooter
+]=====]
+  .. xsltfooter
 
-
-PhotoDeckAPIXSLT.mediasInGallery = xsltheader .. [=====[
+PhotoDeckAPIXSLT.mediasInGallery = xsltheader
+  .. [=====[
   <xsl:template match='/reply/gallery/*'/>
   <xsl:template match='/reply/gallery/medias'>
 local t = {
@@ -180,9 +196,11 @@ local t = {
 }
 return t
   </xsl:template>
-]=====] .. xsltfooter
+]=====]
+  .. xsltfooter
 
-PhotoDeckAPIXSLT.subGalleriesInGallery = xsltheader .. [=====[
+PhotoDeckAPIXSLT.subGalleriesInGallery = xsltheader
+  .. [=====[
   <xsl:template match='/reply/galleries'>
 local t = {}
     <xsl:for-each select='gallery'>
@@ -196,21 +214,27 @@ t["<xsl:value-of select='uuid'/>"] = {
     </xsl:for-each>
 return t
   </xsl:template>
-]=====] .. xsltfooter
+]=====]
+  .. xsltfooter
 
-PhotoDeckAPIXSLT.totalPages = xsltheader .. [=====[
+PhotoDeckAPIXSLT.totalPages = xsltheader
+  .. [=====[
   <xsl:template match='/reply'>
 return "<xsl:value-of select='total-pages'/>"
   </xsl:template>
-]=====] .. xsltfooter
+]=====]
+  .. xsltfooter
 
-PhotoDeckAPIXSLT.uploadStopWithError = xsltheader .. [=====[
+PhotoDeckAPIXSLT.uploadStopWithError = xsltheader
+  .. [=====[
   <xsl:template match='/reply'>
 return "<xsl:value-of select='stop-with-error'/>"
   </xsl:template>
-]=====] .. xsltfooter
+]=====]
+  .. xsltfooter
 
-PhotoDeckAPIXSLT.galleryDisplayStyles = xsltheader .. [=====[
+PhotoDeckAPIXSLT.galleryDisplayStyles = xsltheader
+  .. [=====[
   <xsl:template match='/reply/gallery-display-styles'>
 local t = {}
     <xsl:for-each select='gallery-display-style'>
@@ -221,21 +245,22 @@ t["<xsl:value-of select='uuid'/>"] = {
    </xsl:for-each>
 return t
   </xsl:template>
-]=====] .. xsltfooter
+]=====]
+  .. xsltfooter
 
 PhotoDeckAPIXSLT.transform = function(xmlstring, xslt)
-  if xmlstring and string.sub(xmlstring, 1, 5) == '<?xml' then
+  if xmlstring and string.sub(xmlstring, 1, 5) == "<?xml" then
     -- prevent LUA code injection
     local _
-    xmlstring, _ = string.gsub(xmlstring, '%[====%[', '')
-    xmlstring, _ = string.gsub(xmlstring, '%]====%]', '')
+    xmlstring, _ = string.gsub(xmlstring, "%[====%[", "")
+    xmlstring, _ = string.gsub(xmlstring, "%]====%]", "")
 
     -- parse & load
     --log_trace("XML: " .. xmlstring)
     local xml = LrXml.parseXml(xmlstring)
     local luastring = xml:transform(xslt)
     --log_trace("LUA: " .. luastring)
-    if luastring ~= '' then
+    if luastring ~= "" then
       local f = assert(loadstring(luastring))
       return f()
     else

@@ -1,33 +1,31 @@
-local LrApplication = import 'LrApplication'
-local LrFileUtils = import 'LrFileUtils'
-local LrTasks = import 'LrTasks'
-local LrErrors = import 'LrErrors'
-local LrHttp = import 'LrHttp'
+local LrApplication = import("LrApplication")
+local LrFileUtils = import("LrFileUtils")
+local LrTasks = import("LrTasks")
+local LrErrors = import("LrErrors")
+local LrHttp = import("LrHttp")
 
-local logger = import 'LrLogger'( 'PhotoDeckPublishLightroomPlugin' )
-logger:enable('logfile')
-local log_trace = logger:quick('trace')
+local logger = import("LrLogger")("PhotoDeckPublishLightroomPlugin")
+logger:enable("logfile")
+local log_trace = logger:quick("trace")
 
-local PhotoDeckAPI = require 'PhotoDeckAPI'
-local PhotoDeckDialogs = require 'PhotoDeckDialogs'
+local PhotoDeckAPI = require("PhotoDeckAPI")
+local PhotoDeckDialogs = require("PhotoDeckDialogs")
 
 local publishServiceProvider = {}
 
 -- General plugin configuration for export & publish operations
-publishServiceProvider.hideSections = { 'exportLocation' }
-publishServiceProvider.allowFileFormats = { 'JPEG', 'TIFF', 'ORIGINAL' }
+publishServiceProvider.hideSections = { "exportLocation" }
+publishServiceProvider.allowFileFormats = { "JPEG", "TIFF", "ORIGINAL" }
 publishServiceProvider.hidePrintResolution = true
-
 
 -- General plugin configuration for publish operations
 publishServiceProvider.supportsIncrementalPublish = true
 publishServiceProvider.supportsCustomSortOrder = true
-publishServiceProvider.small_icon = 'photodeck16.png'
+publishServiceProvider.small_icon = "photodeck16.png"
 publishServiceProvider.titleForPublishedCollection = LOC("$$$/PhotoDeck/Publish/Collection=Gallery")
 publishServiceProvider.titleForPublishedCollectionSet = LOC("$$$/PhotoDeck/Publish/CollectionSet=Folder")
 publishServiceProvider.titleForGoToPublishedCollection = LOC("$$$/PhotoDeck/Publish/GoToCollection=Go to PhotoDeck Gallery")
-publishServiceProvider.titleForGoToPublishedPhoto =  LOC("$$$/PhotoDeck/Publish/GoToPhoto=Go to Photo in PhotoDeck Gallery")
-
+publishServiceProvider.titleForGoToPublishedPhoto = LOC("$$$/PhotoDeck/Publish/GoToPhoto=Go to Photo in PhotoDeck Gallery")
 
 -- Photo metadata changes that should retrigger a republish
 publishServiceProvider.metadataThatTriggersRepublish = function(publishSettings)
@@ -47,36 +45,31 @@ publishServiceProvider.metadataThatTriggersRepublish = function(publishSettings)
     stateProvince = true,
     country = true,
     copyright = true,
-    customMetadata = false
+    customMetadata = false,
   }
 end
 
-
 -- These fields get stored between uses
 publishServiceProvider.exportPresetFields = {
-  { key = 'username', default = "" },
-  { key = 'password', default = "" },
-  { key = 'apiKey', default = "" },
-  { key = 'apiSecret', default = "" },
-  { key = 'websiteChosen', default = "" },
-  { key = 'artistChosen', default = nil },
-  { key = 'uploadOnRepublish', default = false }
+  { key = "username", default = "" },
+  { key = "password", default = "" },
+  { key = "apiKey", default = "" },
+  { key = "apiSecret", default = "" },
+  { key = "websiteChosen", default = "" },
+  { key = "artistChosen", default = nil },
+  { key = "uploadOnRepublish", default = false },
 }
-
 
 -- Plugin settings dialog
 publishServiceProvider.startDialog = PhotoDeckDialogs.startDialog
 publishServiceProvider.sectionsForTopOfDialog = PhotoDeckDialogs.sectionsForTopOfDialog
 
-
 -- Dialog when a publish service has been created
 publishServiceProvider.didCreateNewPublishService = PhotoDeckDialogs.didCreateNewPublishService
-
 
 -- Published collection / collection set settings dialog
 publishServiceProvider.viewForCollectionSettings = PhotoDeckDialogs.viewForCollectionSettings
 publishServiceProvider.viewForCollectionSetSettings = PhotoDeckDialogs.viewForCollectionSettings
-
 
 -- Published collection name validation
 publishServiceProvider.validatePublishedCollectionName = function(proposedName)
@@ -84,7 +77,6 @@ publishServiceProvider.validatePublishedCollectionName = function(proposedName)
   local length = string.len(proposedName)
   return length > 0 and length < 200
 end
-
 
 -- Process rendered photos (export or publish)
 local function getPhotoDeckPhotoIdsStoredInCatalog(photo)
@@ -99,7 +91,7 @@ local function getPhotoDeckPhotoIdsStoredInCatalog(photo)
     local val = nil
     local i = 0
     local pkv = {}
-    for kv in string.gmatch(elem, '[^:]+') do
+    for kv in string.gmatch(elem, "[^:]+") do
       i = i + 1
       pkv[i] = kv
     end
@@ -108,7 +100,7 @@ local function getPhotoDeckPhotoIdsStoredInCatalog(photo)
         key = pkv[1]
         val = pkv[2]
       else
-        key = ''
+        key = ""
         val = pkv[1]
       end
     end
@@ -122,7 +114,7 @@ end
 
 local function catalogKeyForPhotoDeckPhotoId(photo, websiteuuid)
   local catalogKey = websiteuuid
-  if photo:getRawMetadata('isVirtualCopy') then
+  if photo:getRawMetadata("isVirtualCopy") then
     -- virtual copy shares the same metadata catalog entries it seems, so we use a different key to store the PhotoDeck ID
     catalogKey = catalogKey .. "/" .. tostring(photo.localIdentifier)
   end
@@ -133,17 +125,17 @@ local function storePhotoDeckPhotoIdInCatalog(photo, websiteuuid, photouuid)
   local curr = getPhotoDeckPhotoIdsStoredInCatalog(photo)
   local catalogKey = catalogKeyForPhotoDeckPhotoId(photo, websiteuuid)
   curr[catalogKey] = photouuid
-  local str = ''
+  local str = ""
   for k, v in pairs(curr) do
     if v then
-      if k and k ~= '' then
-        str = str .. tostring(k) .. ':' .. tostring(v) .. ' '
+      if k and k ~= "" then
+        str = str .. tostring(k) .. ":" .. tostring(v) .. " "
       else
-        str = str .. tostring(v) .. ' '
+        str = str .. tostring(v) .. " "
       end
     end
   end
-  if str == '' then
+  if str == "" then
     str = nil
   end
 
@@ -162,10 +154,10 @@ local function getPhotoDeckPhotoIdInCatalogOrLock(catalog, rendition, photo, web
     catalog:withPrivateWriteAccessDo(function(context)
       -- NOTE: we are using rendition.publishedPhotoId only as a last resort, as the photo might have seen it's UUID change in another gallery (e.g., following a manual deletion directly within PhotoDeck, followed by a publication in another gallery) -- rendition.publishedPhotoId might thus be outdated
       local photoIds = getPhotoDeckPhotoIdsStoredInCatalog(photo)
-      if photo:getRawMetadata('isVirtualCopy') then
+      if photo:getRawMetadata("isVirtualCopy") then
         photoId = photoIds[catalogKey] or rendition.publishedPhotoId
       else
-        photoId = photoIds[catalogKey] or photoIds[''] or rendition.publishedPhotoId
+        photoId = photoIds[catalogKey] or photoIds[""] or rendition.publishedPhotoId
       end
 
       if photoId == ignorePhotoId then
@@ -174,13 +166,13 @@ local function getPhotoDeckPhotoIdInCatalogOrLock(catalog, rendition, photo, web
 
       if not photoId then
         -- update catalog with a temporary "lock" on this photo so that a concurrent publish waits for us to release the lock
-        storePhotoDeckPhotoIdInCatalog(photo, websiteuuid, 'lock')
+        storePhotoDeckPhotoIdInCatalog(photo, websiteuuid, "lock")
       end
     end, { timeout = 120 })
 
-    locked = photoId == 'lock'
+    locked = photoId == "lock"
     if locked then
-      log_trace(string.format('       ** Photo is locked, sleeping for 1 second'))
+      log_trace(string.format("       ** Photo is locked, sleeping for 1 second"))
       LrTasks.sleep(1)
     end
   until not locked
@@ -188,11 +180,11 @@ local function getPhotoDeckPhotoIdInCatalogOrLock(catalog, rendition, photo, web
   return photoId
 end
 
-function publishServiceProvider.processRenderedPhotos( functionContext, exportContext )
-  log_trace('publishServiceProvider.processRenderedPhotos')
+function publishServiceProvider.processRenderedPhotos(functionContext, exportContext)
+  log_trace("publishServiceProvider.processRenderedPhotos")
 
   local exportSession = exportContext.exportSession
-  local exportSettings = assert( exportContext.propertyTable )
+  local exportSettings = assert(exportContext.propertyTable)
   local isPublish = exportSettings.LR_isExportForPublish
   local nPhotos = exportSession:countRenditions()
   local catalog = exportSession.catalog
@@ -202,11 +194,10 @@ function publishServiceProvider.processRenderedPhotos( functionContext, exportCo
   PhotoDeckAPI.connect(exportSettings.apiKey, exportSettings.apiSecret, exportSettings.username, exportSettings.password)
 
   -- Set progress title.
-  local progressScope = exportContext:configureProgress {
-    title = nPhotos > 1
-    and LOC("$$$/PhotoDeck/ProcessRenderedPhotos/Progress=Publishing ^1 photos to PhotoDeck", nPhotos)
-    or LOC "$$$/PhotoDeck/ProcessRenderedPhotos/Progress/One=Publishing one photo to PhotoDeck",
-  }
+  local progressScope = exportContext:configureProgress({
+    title = nPhotos > 1 and LOC("$$$/PhotoDeck/ProcessRenderedPhotos/Progress=Publishing ^1 photos to PhotoDeck", nPhotos)
+      or LOC("$$$/PhotoDeck/ProcessRenderedPhotos/Progress/One=Publishing one photo to PhotoDeck"),
+  })
 
   -- Look for a gallery id for this collection.
   local urlname = exportSettings.websiteChosen
@@ -251,9 +242,9 @@ function publishServiceProvider.processRenderedPhotos( functionContext, exportCo
   end
 
   -- Iterate through photo renditions.
-  for i, rendition in exportContext:renditions { stopIfCanceled = true } do
+  for i, rendition in exportContext:renditions({ stopIfCanceled = true }) do
     -- Update progress scope.
-    progressScope:setPortionComplete( ( i - 1 ) / nPhotos )
+    progressScope:setPortionComplete((i - 1) / nPhotos)
 
     -- Get next photo.
     local photo = rendition.photo
@@ -262,9 +253,11 @@ function publishServiceProvider.processRenderedPhotos( functionContext, exportCo
     if not rendition.wasSkipped and not cancel_next_uploads then
       local success, pathOrMessage = rendition:waitForRender()
       -- Update progress scope again once we've got rendered photo.
-      progressScope:setPortionComplete( ( i - 0.5 ) / nPhotos )
+      progressScope:setPortionComplete((i - 0.5) / nPhotos)
       -- Check for cancellation again after photo has been rendered.
-      if progressScope:isCanceled() then break end
+      if progressScope:isCanceled() then
+        break
+      end
       if success then
         error_msg = nil
 
@@ -355,9 +348,8 @@ function publishServiceProvider.processRenderedPhotos( functionContext, exportCo
 
         -- When done with photo, delete temp file. There is a cleanup step that happens later,
         -- but this will help manage space in the event of a large upload.
-        LrFileUtils.delete( pathOrMessage )
+        LrFileUtils.delete(pathOrMessage)
       end
-
     elseif cancel_next_uploads then
       rendition:renditionIsDone(false, error_msg or LOC("$$$/PhotoDeck/ProcessRenderedPhotos/ErrorUploading=Upload failed"))
     end
@@ -366,11 +358,9 @@ function publishServiceProvider.processRenderedPhotos( functionContext, exportCo
   progressScope:done()
 end
 
-
-
 -- Delete photo from published collection
 publishServiceProvider.deletePhotosFromPublishedCollection = function(publishSettings, arrayOfPhotoIds, deletedCallback, localCollectionId)
-  log_trace('publishServiceProvider.deletePhotosFromPublishedCollection')
+  log_trace("publishServiceProvider.deletePhotosFromPublishedCollection")
   PhotoDeckAPI.connect(publishSettings.apiKey, publishSettings.apiSecret, publishSettings.username, publishSettings.password)
   local catalog = LrApplication.activeCatalog()
   local collection = catalog:getPublishedCollectionByLocalIdentifier(localCollectionId)
@@ -385,7 +375,7 @@ publishServiceProvider.deletePhotosFromPublishedCollection = function(publishSet
   for _, pp in pairs(publishedPhotos) do
     publishedPhotoById[pp:getRemoteId()] = pp
   end
-  for i, photoId in ipairs( arrayOfPhotoIds ) do
+  for i, photoId in ipairs(arrayOfPhotoIds) do
     error_msg = nil
     if photoId ~= "" then
       local publishedPhoto = publishedPhotoById[photoId]
@@ -458,10 +448,9 @@ publishServiceProvider.deletePhotosFromPublishedCollection = function(publishSet
   end
 end
 
-
 -- Update published collection
-publishServiceProvider.updateCollectionSettings = function( publishSettings, info )
-  log_trace('publishServiceProvider.updateCollectionSettings')
+publishServiceProvider.updateCollectionSettings = function(publishSettings, info)
+  log_trace("publishServiceProvider.updateCollectionSettings")
   PhotoDeckAPI.connect(publishSettings.apiKey, publishSettings.apiSecret, publishSettings.username, publishSettings.password)
   local urlname = publishSettings.websiteChosen
   local result, error_msg = PhotoDeckAPI.createOrUpdateGallery(urlname, info, true)
@@ -469,11 +458,10 @@ publishServiceProvider.updateCollectionSettings = function( publishSettings, inf
     LrErrors.throwUserError(LOC("$$$/PhotoDeck/UpdateCollection/ErrorUpdatingGallery=Error updating gallery: ^1", error_msg))
   end
 end
-
 
 -- Update published collection set
-publishServiceProvider.updateCollectionSetSettings = function( publishSettings, info )
-  log_trace('publishServiceProvider.updateCollectionSetSettings')
+publishServiceProvider.updateCollectionSetSettings = function(publishSettings, info)
+  log_trace("publishServiceProvider.updateCollectionSetSettings")
   PhotoDeckAPI.connect(publishSettings.apiKey, publishSettings.apiSecret, publishSettings.username, publishSettings.password)
   local urlname = publishSettings.websiteChosen
   local result, error_msg = PhotoDeckAPI.createOrUpdateGallery(urlname, info, true)
@@ -482,10 +470,9 @@ publishServiceProvider.updateCollectionSetSettings = function( publishSettings, 
   end
 end
 
-
 -- Rename published collection
-publishServiceProvider.renamePublishedCollection = function( publishSettings, info )
-  log_trace('publishServiceProvider.renamePublishedCollection')
+publishServiceProvider.renamePublishedCollection = function(publishSettings, info)
+  log_trace("publishServiceProvider.renamePublishedCollection")
   PhotoDeckAPI.connect(publishSettings.apiKey, publishSettings.apiSecret, publishSettings.username, publishSettings.password)
   local urlname = publishSettings.websiteChosen
   local result, error_msg = PhotoDeckAPI.createOrUpdateGallery(urlname, info)
@@ -494,10 +481,9 @@ publishServiceProvider.renamePublishedCollection = function( publishSettings, in
   end
 end
 
-
 -- Reparent published collection
-publishServiceProvider.reparentPublishedCollection = function( publishSettings, info )
-  log_trace('publishServiceProvider.reparentPublishedCollection')
+publishServiceProvider.reparentPublishedCollection = function(publishSettings, info)
+  log_trace("publishServiceProvider.reparentPublishedCollection")
   PhotoDeckAPI.connect(publishSettings.apiKey, publishSettings.apiSecret, publishSettings.username, publishSettings.password)
   local urlname = publishSettings.websiteChosen
   local result, error_msg = PhotoDeckAPI.createOrUpdateGallery(urlname, info)
@@ -506,10 +492,9 @@ publishServiceProvider.reparentPublishedCollection = function( publishSettings, 
   end
 end
 
-
 -- Delete published collection
-publishServiceProvider.deletePublishedCollection = function( publishSettings, info )
-  log_trace('publishServiceProvider.deletePublishedCollection')
+publishServiceProvider.deletePublishedCollection = function(publishSettings, info)
+  log_trace("publishServiceProvider.deletePublishedCollection")
   PhotoDeckAPI.connect(publishSettings.apiKey, publishSettings.apiSecret, publishSettings.username, publishSettings.password)
   local urlname = publishSettings.websiteChosen
   local galleryId = info.remoteId
@@ -519,10 +504,9 @@ publishServiceProvider.deletePublishedCollection = function( publishSettings, in
   end
 end
 
-
 -- Go to published photo
-publishServiceProvider.goToPublishedPhoto = function( publishSettings, info )
-  log_trace('publishServiceProvider.goToPublishedPhoto')
+publishServiceProvider.goToPublishedPhoto = function(publishSettings, info)
+  log_trace("publishServiceProvider.goToPublishedPhoto")
   local catalog = LrApplication.activeCatalog()
 
   -- The following is just ugly and not robust, but Lightroom doesn't gives us the LrPublishedCollection object, just it's name and parents.
@@ -541,9 +525,9 @@ publishServiceProvider.goToPublishedPhoto = function( publishSettings, info )
 
   if publishedCollection then
     local galleryurl = publishedCollection:getRemoteUrl()
-    if galleryurl and galleryurl ~= '' then
-      local url = galleryurl .. '/-/medias/' .. info.remoteId
-      log_trace('Opening ' .. url)
+    if galleryurl and galleryurl ~= "" then
+      local url = galleryurl .. "/-/medias/" .. info.remoteId
+      log_trace("Opening " .. url)
       LrHttp.openUrlInBrowser(url)
     else
       LrErrors.throwUserError(LOC("$$$/PhotoDeck/GoToPublishedPhoto/GalleryUrlNotFound=Gallery address is not known yet"))
@@ -553,10 +537,9 @@ publishServiceProvider.goToPublishedPhoto = function( publishSettings, info )
   end
 end
 
-
 -- Reorder collection
-publishServiceProvider.imposeSortOrderOnPublishedCollection = function( publishSettings, info, remoteIdSequence )
-  log_trace('publishServiceProvider.imposeSortOrderOnPublishedCollection')
+publishServiceProvider.imposeSortOrderOnPublishedCollection = function(publishSettings, info, remoteIdSequence)
+  log_trace("publishServiceProvider.imposeSortOrderOnPublishedCollection")
   PhotoDeckAPI.connect(publishSettings.apiKey, publishSettings.apiSecret, publishSettings.username, publishSettings.password)
 
   local urlname = publishSettings.websiteChosen
@@ -572,7 +555,6 @@ publishServiceProvider.imposeSortOrderOnPublishedCollection = function( publishS
     return true
   end
 end
-
 
 -- Done
 return publishServiceProvider
