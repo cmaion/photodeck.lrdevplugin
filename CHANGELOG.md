@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## 0.18.1 - 23/03/2026
+
+Add upload retry mechanisms and fallback to secondary upload endpoints
+
 ## 0.18.0 - 20/03/2026
 
 Add support for new upload endpoints
