@@ -39,7 +39,6 @@ publishServiceProvider.metadataThatTriggersRepublish = function(publishSettings)
     dateCreated = true,
     headline = true,
     iptcSubjectCode = true,
-    dateCreated = true,
     location = true,
     city = true,
     stateProvince = true,
