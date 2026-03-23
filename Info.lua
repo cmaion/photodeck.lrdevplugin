@@ -3,7 +3,7 @@ return {
   LrSdkMinimumVersion = 3.0, -- minimum SDK version required by this plug-in
   LrToolkitIdentifier = "au.id.willthames.photodeck",
   LrPluginName = "PhotoDeck",
-  LrPluginInfoUrl = "https://github.com/willthames/photodeck.lrdevplugin",
+  LrPluginInfoUrl = "https://github.com/cmaion/photodeck.lrdevplugin",
 
   LrExportServiceProvider = {
     title = "PhotoDeck", -- this string appears in the Publish Services panel
