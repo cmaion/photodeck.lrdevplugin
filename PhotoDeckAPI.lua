@@ -631,32 +631,32 @@ function PhotoDeckAPI.openGalleryInBackend(galleryId)
   LrHttp.openUrlInBrowser(PhotoDeckMY_BASEURL .. "/medias/manage?gallery_id=" .. galleryId)
 end
 
-local function buildGalleryInfoFromLrCollectionInfo(collectionInfo)
-  local galleryInfo = {}
-  galleryInfo["gallery[name]"] = collectionInfo.name
+local function buildGalleryParams(collectionInfo)
+  local params = {}
+  params["gallery[name]"] = collectionInfo.name
   local collectionSettings = collectionInfo.collectionSettings
   if collectionSettings then
-    galleryInfo["gallery[description]"] = collectionSettings["description"]
-    galleryInfo["gallery[display_style]"] = collectionSettings["display_style"]
+    params["gallery[description]"] = collectionSettings["description"]
+    params["gallery[display_style]"] = collectionSettings["display_style"]
   end
-  return galleryInfo
+  return params
 end
 
 function PhotoDeckAPI.createGallery(urlname, parentId, collectionInfo)
   log_trace(string.format('PhotoDeckAPI.createGallery("%s", "%s", <collectionInfo>)', urlname, parentId))
-  local galleryInfo = buildGalleryInfoFromLrCollectionInfo(collectionInfo)
-  galleryInfo["gallery[content_order]"] = "manual-last"
-  galleryInfo["gallery[parent]"] = parentId
-  local response, error_msg = PhotoDeckAPI.request("POST", "/websites/" .. urlname .. "/galleries.xml", galleryInfo)
+  local params = buildGalleryParams(collectionInfo)
+  params["gallery[content_order]"] = "manual-last"
+  params["gallery[parent]"] = parentId
+  local response, error_msg = PhotoDeckAPI.request("POST", "/websites/" .. urlname .. "/galleries.xml", params)
   local gallery = PhotoDeckAPIXSLT.transform(response, PhotoDeckAPIXSLT.gallery)
   return gallery, error_msg
 end
 
 function PhotoDeckAPI.updateGallery(urlname, galleryId, parentId, collectionInfo)
   log_trace(string.format('PhotoDeckAPI.updateGallery("%s", "%s", "%s", <collectionInfo>)', urlname, galleryId, parentId))
-  local galleryInfo = buildGalleryInfoFromLrCollectionInfo(collectionInfo)
-  galleryInfo["gallery[parent]"] = parentId
-  local response, error_msg = PhotoDeckAPI.request("PUT", "/websites/" .. urlname .. "/galleries/" .. galleryId .. ".xml", galleryInfo)
+  local params = buildGalleryParams(collectionInfo)
+  params["gallery[parent]"] = parentId
+  local response, error_msg = PhotoDeckAPI.request("PUT", "/websites/" .. urlname .. "/galleries/" .. galleryId .. ".xml", params)
   local gallery = PhotoDeckAPIXSLT.transform(response, PhotoDeckAPIXSLT.gallery)
   return gallery, error_msg
 end
@@ -1434,37 +1434,37 @@ function PhotoDeckAPI.subGalleriesInGallery(urlname, galleryId, matchingName, ig
   end
 end
 
-local function buildPhotoInfoFromLrPhoto(photo, updating)
-  local photoInfo = {}
+local function buildMediaMetadataParams(photo, updating)
+  local params = {}
   local title = photo:getFormattedMetadata("headline")
   if not title or title == "" then
     title = photo:getFormattedMetadata("title")
   end
-  photoInfo["media[title]"] = title
-  photoInfo["media[description]"] = photo:getFormattedMetadata("caption")
-  photoInfo["media[keywords]"] = photo:getFormattedMetadata("keywordTagsForExport")
-  photoInfo["media[location]"] = photo:getFormattedMetadata("location")
-  photoInfo["media[city]"] = photo:getFormattedMetadata("city")
-  photoInfo["media[state]"] = photo:getFormattedMetadata("stateProvince")
-  photoInfo["media[country]"] = photo:getFormattedMetadata("country")
-  photoInfo["media[author]"] = photo:getFormattedMetadata("creator")
-  photoInfo["media[copyright]"] = photo:getFormattedMetadata("copyright")
+  params["media[title]"] = title
+  params["media[description]"] = photo:getFormattedMetadata("caption")
+  params["media[keywords]"] = photo:getFormattedMetadata("keywordTagsForExport")
+  params["media[location]"] = photo:getFormattedMetadata("location")
+  params["media[city]"] = photo:getFormattedMetadata("city")
+  params["media[state]"] = photo:getFormattedMetadata("stateProvince")
+  params["media[country]"] = photo:getFormattedMetadata("country")
+  params["media[author]"] = photo:getFormattedMetadata("creator")
+  params["media[copyright]"] = photo:getFormattedMetadata("copyright")
   local location = photo:getFormattedMetadata("locationShown") or photo:getFormattedMetadata("locationCreated")
   if location and location[1] then
-    photoInfo["media[region]"] = location[1]["WorldRegion"]
+    params["media[region]"] = location[1]["WorldRegion"]
   end
   local artist_rating = photo:getFormattedMetadata("rating")
   if updating and not artist_rating then
-    photoInfo["media[delete_artist_rating]"] = 1
+    params["media[delete_artist_rating]"] = 1
   else
-    photoInfo["media[artist_rating]"] = artist_rating
+    params["media[artist_rating]"] = artist_rating
   end
-  photoInfo["media[date_created]"] = photo:getRawMetadata("dateTimeOriginalISO8601")
-  return photoInfo
+  params["media[date_created]"] = photo:getRawMetadata("dateTimeOriginalISO8601")
+  return params
 end
 
-local function buildFileUploadParams(contentPath, photo)
-  local content = {}
+local function buildMediaUploadParams(contentPath, photo)
+  local params = {}
   local upload_location_requested = false
   local file_size = 0
   local mime_type
@@ -1486,24 +1486,24 @@ local function buildFileUploadParams(contentPath, photo)
   if canRequestUploadLocation then
     local file_attrs = LrFileUtils.fileAttributes(contentPath)
     file_size = file_attrs.fileSize
-    table.insert(content, { name = "media[content][upload_location]", value = "REQUEST" })
-    table.insert(content, { name = "media[content][file_name]", value = LrPathUtils.leafName(contentPath) })
-    table.insert(content, { name = "media[content][file_size]", value = file_size })
-    table.insert(content, { name = "media[content][mime_type]", value = mime_type })
-    table.insert(content, { name = "media[content][capabilities]", value = "raw" })
+    table.insert(params, { name = "media[content][upload_location]", value = "REQUEST" })
+    table.insert(params, { name = "media[content][file_name]", value = LrPathUtils.leafName(contentPath) })
+    table.insert(params, { name = "media[content][file_size]", value = file_size })
+    table.insert(params, { name = "media[content][mime_type]", value = mime_type })
+    table.insert(params, { name = "media[content][capabilities]", value = "raw" })
     if #failedUploadLocations > 0 then
-      table.insert(content, { name = "media[content][failed_locations]", value = table.concat(failedUploadLocations, ",") })
+      table.insert(params, { name = "media[content][failed_locations]", value = table.concat(failedUploadLocations, ",") })
     end
     upload_location_requested = true
   else
-    table.insert(content, { name = "media[content]", filePath = contentPath, fileName = LrPathUtils.leafName(contentPath), contentType = mime_type })
+    table.insert(params, { name = "media[content]", filePath = contentPath, fileName = LrPathUtils.leafName(contentPath), contentType = mime_type })
   end
-  return content, upload_location_requested, file_size, mime_type
+  return params, upload_location_requested, file_size, mime_type
 end
 
 local function handleIndirectUpload(contentPath, urlname, media, file_size, mime_type)
   local error_msg = nil
-  local content = {}
+  local params = {}
   local retryable = true
   local stop_all = false
   if media.uploadurl and media.uploadurl ~= "" then
@@ -1515,13 +1515,13 @@ local function handleIndirectUpload(contentPath, urlname, media, file_size, mime
     if media.uploadfileparam and media.uploadfileparam ~= "" then
       -- multipart upload
       for k, v in pairs(media.uploadparams) do
-        table.insert(content, { name = k, value = v })
+        table.insert(params, { name = k, value = v })
       end
-      table.insert(content, { name = media.uploadfileparam, filePath = contentPath, fileName = media.filename, contentType = mime_type })
+      table.insert(params, { name = media.uploadfileparam, filePath = contentPath, fileName = media.filename, contentType = mime_type })
       --log_trace('PhotoDeckAPI.handleIndirectUpload: ' .. printTable(content))
       log_trace(string.format(" %s -> %s[multipart] %s", seq, "POST", media.uploadurl))
       started_at = LrDate.currentTime()
-      result, resp_headers = LrHttp.postMultipart(media.uploadurl, content)
+      result, resp_headers = LrHttp.postMultipart(media.uploadurl, params)
     else
       -- direct upload of raw file
       log_trace(string.format(" %s -> %s[raw] %s", seq, media.uploadmethod, media.uploadurl))
@@ -1610,35 +1610,35 @@ function PhotoDeckAPI.updatePhoto(photoId, urlname, attributes, handleNotFound)
       url = "/medias.xml"
       method = "POST"
     end
-    local content = {}
+    local params = {}
     local upload_location_requested = false
     local file_size
     local mime_type
     if attributes.contentPath then
-      content, upload_location_requested, file_size, mime_type = buildFileUploadParams(attributes.contentPath, attributes.lrPhoto)
+      params, upload_location_requested, file_size, mime_type = buildMediaUploadParams(attributes.contentPath, attributes.lrPhoto)
       upload_attempts = upload_attempts + 1
     end
     if attributes.contentUploadLocation then
-      table.insert(content, { name = "media[content][upload_location]", value = attributes.contentUploadLocation })
-      table.insert(content, { name = "media[content][file_name]", value = attributes.contentFileName })
-      table.insert(content, { name = "media[content][file_size]", value = attributes.contentFileSize })
-      table.insert(content, { name = "media[content][mime_type]", value = attributes.contentMimeType })
-      table.insert(content, { name = "media[content][upload_duration]", value = attributes.uploadDuration })
+      table.insert(params, { name = "media[content][upload_location]", value = attributes.contentUploadLocation })
+      table.insert(params, { name = "media[content][file_name]", value = attributes.contentFileName })
+      table.insert(params, { name = "media[content][file_size]", value = attributes.contentFileSize })
+      table.insert(params, { name = "media[content][mime_type]", value = attributes.contentMimeType })
+      table.insert(params, { name = "media[content][upload_duration]", value = attributes.uploadDuration })
     end
     if attributes.artistId then
-      table.insert(content, { name = "artist_id", value = attributes.artistId })
+      table.insert(params, { name = "artist_id", value = attributes.artistId })
     end
     if attributes.publishToGallery then
-      table.insert(content, { name = "media[publish_to_galleries]", value = attributes.publishToGallery })
+      table.insert(params, { name = "media[publish_to_galleries]", value = attributes.publishToGallery })
     end
     if attributes.lrPhoto then
-      local attributesFromLrPhoto = buildPhotoInfoFromLrPhoto(attributes.lrPhoto, true)
-      for k, v in pairs(attributesFromLrPhoto) do
-        table.insert(content, { name = k, value = v })
+      local metadataParams = buildMediaMetadataParams(attributes.lrPhoto, not not photoId)
+      for k, v in pairs(metadataParams) do
+        table.insert(params, { name = k, value = v })
       end
     end
     --log_trace('PhotoDeckAPI.updatePhoto: ' .. printTable(content))
-    local response, error_msg = PhotoDeckAPI.requestMultiPart(method, url, content, onerror)
+    local response, error_msg = PhotoDeckAPI.requestMultiPart(method, url, params, onerror)
     if handleNotFound and error_msg == "Not found" then
       return { notfound = true }, error_msg, false
     end
@@ -1809,11 +1809,11 @@ function PhotoDeckAPI.reorderGallery(urlname, galleryId, mediasIds)
   end
   log_trace(seq)
 
-  local galleryInfo = {}
-  galleryInfo["gallery[content_order]"] = "manual-last"
-  galleryInfo["gallery[medias_order]"] = seq
+  local params = {}
+  params["gallery[content_order]"] = "manual-last"
+  params["gallery[medias_order]"] = seq
 
-  local response, error_msg = PhotoDeckAPI.request("PUT", "/websites/" .. urlname .. "/galleries/" .. galleryId .. ".xml", galleryInfo)
+  local response, error_msg = PhotoDeckAPI.request("PUT", "/websites/" .. urlname .. "/galleries/" .. galleryId .. ".xml", params)
 
   return response, error_msg
 end
