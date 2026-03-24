@@ -193,6 +193,7 @@ function publishServiceProvider.processRenderedPhotos(functionContext, exportCon
   local exportSession = exportContext.exportSession
   local exportSettings = assert(exportContext.propertyTable)
   local isPublish = exportSettings.LR_isExportForPublish
+  local exportFormat = exportSettings.LR_format
   local nPhotos = exportSession:countRenditions()
   local catalog = exportSession.catalog
   local error_msg
@@ -290,6 +291,27 @@ function publishServiceProvider.processRenderedPhotos(functionContext, exportCon
             photoAttributes.publishToGallery = gallery.uuid
           end
           photoAttributes.lrPhoto = photo
+
+          if exportFormat == "JPEG" then
+            photoAttributes.mimeType = "image/jpeg"
+          elseif exportFormat == "TIFF" then
+            photoAttributes.mimeType = "image/tiff"
+          elseif exportFormat == "DNG" then
+            photoAttributes.mimeType = "image/x-adobe-dng"
+          elseif exportFormat == "ORIGINAL" then
+            local originalFormat = photo:getRawMetadata("fileFormat")
+            if originalFormat == "JPG" then
+              photoAttributes.mimeType = "image/jpeg"
+            elseif originalFormat == "TIFF" then
+              photoAttributes.mimeType = "image/tiff"
+            elseif originalFormat == "DNG" then
+              photoAttributes.mimeType = "image/x-adobe-dng"
+            elseif originalFormat == "RAW" then
+              photoAttributes.mimeType = "image/x-raw"
+            elseif originalFormat == "VIDEO" then
+              photoAttributes.mimeType = "video/mp4"
+            end
+          end
 
           -- Upload or replace/update the photo.
           local update_done = false

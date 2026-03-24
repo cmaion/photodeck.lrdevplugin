@@ -1463,25 +1463,10 @@ local function buildMediaMetadataParams(photo, updating)
   return params
 end
 
-local function buildMediaUploadParams(contentPath, photo)
+local function buildMediaUploadParams(contentPath, mime_type)
   local params = {}
   local upload_location_requested = false
   local file_size = 0
-  local mime_type
-  local format = photo:getRawMetadata("fileFormat")
-  if format == "JPG" then
-    mime_type = "image/jpeg"
-  elseif format == "TIFF" then
-    mime_type = "image/tiff"
-  elseif format == "DNG" then
-    mime_type = "image/x-adobe-dng"
-  elseif format == "RAW" then
-    mime_type = "image/x-raw"
-  elseif format == "VIDEO" then
-    mime_type = "video/mp4"
-  else
-    mime_type = "application/octet-stream"
-  end
 
   if canRequestUploadLocation then
     local file_attrs = LrFileUtils.fileAttributes(contentPath)
@@ -1498,7 +1483,7 @@ local function buildMediaUploadParams(contentPath, photo)
   else
     table.insert(params, { name = "media[content]", filePath = contentPath, fileName = LrPathUtils.leafName(contentPath), contentType = mime_type })
   end
-  return params, upload_location_requested, file_size, mime_type
+  return params, upload_location_requested, file_size
 end
 
 local function handleIndirectUpload(contentPath, urlname, media, file_size, mime_type)
@@ -1615,7 +1600,8 @@ function PhotoDeckAPI.updatePhoto(photoId, urlname, attributes, handleNotFound)
     local file_size
     local mime_type
     if attributes.contentPath then
-      params, upload_location_requested, file_size, mime_type = buildMediaUploadParams(attributes.contentPath, attributes.lrPhoto)
+      mime_type = attributes.mimeType or "application/octet-stream"
+      params, upload_location_requested, file_size = buildMediaUploadParams(attributes.contentPath, mime_type)
       upload_attempts = upload_attempts + 1
     end
     if attributes.contentUploadLocation then
