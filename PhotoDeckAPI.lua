@@ -377,15 +377,15 @@ end
 
 -- make HTTP GET request to PhotoDeck API
 -- must be called within an LrTask
-function PhotoDeckAPI.request(method, uri, data, onerror)
+function PhotoDeckAPI.request(method, uri, params, onerror)
   local querystring = ""
   local body = ""
   local error_msg
-  if data then
+  if params then
     if method == "GET" then
-      querystring = table_to_querystring(data)
+      querystring = table_to_querystring(params)
     else
-      body = table_to_urlencoded_body(data)
+      body = table_to_urlencoded_body(params)
     end
   end
 
@@ -415,21 +415,21 @@ function PhotoDeckAPI.request(method, uri, data, onerror)
   result, error_msg = handle_response(seq, result, resp_headers, onerror)
 
   if result == "retry" then
-    return PhotoDeckAPI.request(method, uri, data, onerror)
+    return PhotoDeckAPI.request(method, uri, params, onerror)
   end
 
   return result, error_msg
 end
 
-function PhotoDeckAPI.requestMultiPart(method, uri, content, onerror)
+function PhotoDeckAPI.requestMultiPart(method, uri, params, onerror)
   local error_msg
   local seq = string.format("%5i", math.random(99999))
-  log_trace(string.format(" %s -> %s[multipart] %s", seq, method, uri))
+  log_trace(string.format(" %s -> %s[multipart] %s %s", seq, method, uri, printTable(params)))
 
   if method ~= "POST" then
     -- LrHttp doesn't implement non-POSTs multipart requests:
     -- POST content but pass the correct method to the PhotoDeck API as a field
-    table.insert(content, { name = "_method", value = method })
+    table.insert(params, { name = "_method", value = method })
     method = "POST"
   end
 
@@ -441,12 +441,12 @@ function PhotoDeckAPI.requestMultiPart(method, uri, content, onerror)
   -- call API
   ratelimit_throttle()
   local result, resp_headers
-  result, resp_headers = LrHttp.postMultipart(fullurl, content, headers)
+  result, resp_headers = LrHttp.postMultipart(fullurl, params, headers)
 
   result, error_msg = handle_response(seq, result, resp_headers, onerror)
 
   if result == "retry" then
-    return PhotoDeckAPI.requestMultiPart(method, uri, content, onerror)
+    return PhotoDeckAPI.requestMultiPart(method, uri, params, onerror)
   end
 
   return result, error_msg
@@ -1709,12 +1709,12 @@ end
 function PhotoDeckAPI.deletePhotos(photoIds)
   log_trace(string.format("PhotoDeckAPI.deletePhotos(<photo ids)"))
   local url = "/medias/batch_update.xml"
-  local content = {
+  local params = {
     { name = "medias[on]", value = "medias" },
     { name = "medias[medias]", value = table.concat(photoIds, ",") },
     { name = "medias[delete]", value = "1" },
   }
-  local response, error_msg = PhotoDeckAPI.requestMultiPart("PUT", url, content)
+  local response, error_msg = PhotoDeckAPI.requestMultiPart("PUT", url, params)
   --log_trace('PhotoDeckAPI.deletePhotos: ' .. response)
   return response, error_msg
 end
@@ -1722,12 +1722,12 @@ end
 function PhotoDeckAPI.unpublishPhoto(photoId, galleryId)
   log_trace(string.format('PhotoDeckAPI.unpublishPhoto("%s", "%s")', photoId, galleryId))
   local url = "/medias/" .. photoId .. ".xml"
-  local content = { { name = "media[unpublish_from_galleries]", value = galleryId } }
+  local params = { { name = "media[unpublish_from_galleries]", value = galleryId } }
   local onerror = {}
   onerror["404"] = function()
     return nil
   end
-  local response, error_msg = PhotoDeckAPI.requestMultiPart("PUT", url, content, onerror)
+  local response, error_msg = PhotoDeckAPI.requestMultiPart("PUT", url, params, onerror)
   --log_trace('PhotoDeckAPI.unpublishPhoto: ' .. response)
   return response, error_msg
 end
@@ -1735,12 +1735,12 @@ end
 function PhotoDeckAPI.unpublishPhotos(photoIds, galleryId)
   log_trace(string.format('PhotoDeckAPI.unpublishPhotos(<photo ids>, "%s")', galleryId))
   local url = "/medias/batch_update.xml"
-  local content = {
+  local params = {
     { name = "medias[on]", value = "medias" },
     { name = "medias[medias]", value = table.concat(photoIds, ",") },
     { name = "medias[unpublish_from_galleries]", value = galleryId },
   }
-  local response, error_msg = PhotoDeckAPI.requestMultiPart("PUT", url, content)
+  local response, error_msg = PhotoDeckAPI.requestMultiPart("PUT", url, params)
   --log_trace('PhotoDeckAPI.unpublishPhotos: ' .. response)
   return response, error_msg
 end
