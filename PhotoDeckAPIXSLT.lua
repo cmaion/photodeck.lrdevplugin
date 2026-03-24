@@ -138,7 +138,7 @@ local t = {
 <xsl:if test="title">
   title = [====[<xsl:value-of select='title'/>]====],
 </xsl:if>
-<xsl:if test="file-name">
+<xsl:if test="description">
   description = [====[<xsl:value-of select='description'/>]====],
 </xsl:if>
 <xsl:if test="keywords">
