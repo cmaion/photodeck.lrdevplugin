@@ -1467,7 +1467,22 @@ local function buildFileUploadParams(contentPath, photo)
   local content = {}
   local upload_location_requested = false
   local file_size = 0
-  local mime_type = "image/jpeg"
+  local mime_type
+  local format = photo:getRawMetadata("fileFormat")
+  if format == "JPG" then
+    mime_type = "image/jpeg"
+  elseif format == "TIFF" then
+    mime_type = "image/tiff"
+  elseif format == "DNG" then
+    mime_type = "image/x-adobe-dng"
+  elseif format == "RAW" then
+    mime_type = "image/x-raw"
+  elseif format == "VIDEO" then
+    mime_type = "video/mp4"
+  else
+    mime_type = "application/octet-stream"
+  end
+
   if canRequestUploadLocation then
     local file_attrs = LrFileUtils.fileAttributes(contentPath)
     file_size = file_attrs.fileSize
