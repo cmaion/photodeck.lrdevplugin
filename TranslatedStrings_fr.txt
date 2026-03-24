@@ -18,6 +18,7 @@
 "$$$/PhotoDeck/AccountDialog/Website=Site web :"
 "$$$/PhotoDeck/AccountDialog/WebsiteChangeAction=Changer"
 "$$$/PhotoDeck/PublishOptionsDialog/Title=Options de publication PhotoDeck"
+"$$$/PhotoDeck/PublishOptionsDialog/UpdateMetadataOnRepublish=Mettre à jour les métadonnées des photos sur PhotoDeck lors de republications"
 "$$$/PhotoDeck/PublishOptionsDialog/UploadOnRepublish=Réimporter les photos dans PhotoDeck lors de republications"
 "$$$/PhotoDeck/PublishOptionsDialog/Artist=Librairie de médias :"
 "$$$/PhotoDeck/PublishOptionsDialog/ArtistChangeAction=Changer"

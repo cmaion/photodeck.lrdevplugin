@@ -1631,7 +1631,7 @@ function PhotoDeckAPI.updatePhoto(photoId, urlname, attributes, handleNotFound)
     if attributes.publishToGallery then
       table.insert(params, { name = "media[publish_to_galleries]", value = attributes.publishToGallery })
     end
-    if attributes.lrPhoto then
+    if attributes.injectMetadata and attributes.lrPhoto then
       local metadataParams = buildMediaMetadataParams(attributes.lrPhoto, not not photoId)
       for k, v in pairs(metadataParams) do
         table.insert(params, { name = k, value = v })

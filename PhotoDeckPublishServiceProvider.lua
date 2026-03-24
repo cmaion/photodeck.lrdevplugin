@@ -29,23 +29,30 @@ publishServiceProvider.titleForGoToPublishedPhoto = LOC("$$$/PhotoDeck/Publish/G
 
 -- Photo metadata changes that should retrigger a republish
 publishServiceProvider.metadataThatTriggersRepublish = function(publishSettings)
-  return {
-    default = false,
-    rating = true,
-    title = true,
-    caption = true,
-    creator = true,
-    keywords = true,
-    dateCreated = true,
-    headline = true,
-    iptcSubjectCode = true,
-    location = true,
-    city = true,
-    stateProvince = true,
-    country = true,
-    copyright = true,
-    customMetadata = false,
-  }
+  if publishSettings.updateMetadataOnRepublish ~= false then
+    return {
+      default = false,
+      rating = true,
+      title = true,
+      caption = true,
+      creator = true,
+      keywords = true,
+      dateCreated = true,
+      headline = true,
+      iptcSubjectCode = true,
+      location = true,
+      city = true,
+      stateProvince = true,
+      country = true,
+      copyright = true,
+      customMetadata = false,
+    }
+  else
+    return {
+      default = false,
+      customMetadata = false,
+    }
+  end
 end
 
 -- These fields get stored between uses
@@ -57,6 +64,7 @@ publishServiceProvider.exportPresetFields = {
   { key = "websiteChosen", default = "" },
   { key = "artistChosen", default = nil },
   { key = "uploadOnRepublish", default = false },
+  { key = "updateMetadataOnRepublish", default = true },
 }
 
 -- Plugin settings dialog
@@ -275,6 +283,9 @@ function publishServiceProvider.processRenderedPhotos(functionContext, exportCon
           if not photoAlreadyPublished or exportSettings.uploadOnRepublish then
             photoAttributes.contentPath = pathOrMessage
           end
+          if not photoAlreadyPublished or exportSettings.updateMetadataOnRepublish then
+            photoAttributes.injectMetadata = true
+          end
           if gallery then
             photoAttributes.publishToGallery = gallery.uuid
           end
@@ -291,6 +302,7 @@ function publishServiceProvider.processRenderedPhotos(functionContext, exportCon
               photoAlreadyPublished = not not photoId
               if not photoAlreadyPublished then
                 photoAttributes.contentPath = pathOrMessage
+                photoAttributes.injectMetadata = true
               end
             else
               update_done = true

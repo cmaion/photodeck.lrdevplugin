@@ -457,7 +457,9 @@ function PhotoDeckDialogs.sectionsForTopOfDialog(f, propertyTable)
         alignment = "right",
       }),
       f:static_text({
-        title = LOC("$$$/PhotoDeck/PublishOptionsDialog/WatermarkingNote=the watermark set as default watermark in PhotoDeck's uploder will be applied to the images shown on your website. Note that Lightroom's own watermark feature (below), if selected, is applied before the upload to PhotoDeck, and therefore will be visible also on high-res images."),
+        title = LOC(
+          "$$$/PhotoDeck/PublishOptionsDialog/WatermarkingNote=the watermark set as default watermark in PhotoDeck's uploder will be applied to the images shown on your website. Note that Lightroom's own watermark feature (below), if selected, is applied before the upload to PhotoDeck, and therefore will be visible also on high-res images."
+        ),
         font = "<system/small>",
         fill_horizontal = 1,
         height_in_lines = -1,
@@ -469,7 +471,16 @@ function PhotoDeckDialogs.sectionsForTopOfDialog(f, propertyTable)
       bind_to_object = propertyTable,
 
       f:checkbox({
-        title = LOC("$$$/PhotoDeck/PublishOptionsDialog/UploadOnRepublish=Re-upload photo when re-publishing"),
+        title = LOC("$$$/PhotoDeck/PublishOptionsDialog/UpdateMetadataOnRepublish=Update photo metadata on PhotoDeck when re-publishing"),
+        value = LrView.bind("updateMetadataOnRepublish"),
+      }),
+    }),
+
+    f:row({
+      bind_to_object = propertyTable,
+
+      f:checkbox({
+        title = LOC("$$$/PhotoDeck/PublishOptionsDialog/UploadOnRepublish=Re-upload photo on PhotoDeck when re-publishing"),
         value = LrView.bind("uploadOnRepublish"),
       }),
     }),
@@ -515,7 +526,9 @@ end
 function PhotoDeckDialogs.didCreateNewPublishService(publishSettings, info)
   local result = LrDialogs.confirm(
     LOC("$$$/PhotoDeck/InitialSynchronizationDialog/Title=Would you like to import your existing PhotoDeck galleries in Lightroom now?"),
-    LOC("$$$/PhotoDeck/InitialSynchronizationDialog/ConfirmSubtitle=Gallery content is currently not imported.^n^nYou can also import (or re-import) your PhotoDeck galleries later from the publish service settings."),
+    LOC(
+      "$$$/PhotoDeck/InitialSynchronizationDialog/ConfirmSubtitle=Gallery content is currently not imported.^n^nYou can also import (or re-import) your PhotoDeck galleries later from the publish service settings."
+    ),
     LOC("$$$/PhotoDeck/InitialSynchronizationDialog/ProceedAction=Yes, proceed now"),
     LOC("$$$/PhotoDeck/InitialSynchronizationDialog/NoAction=No")
   )
