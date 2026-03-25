@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## 0.18.3 - 25/03/2026
+
+Add ability to select PhotoDeck watermark
+
 ## 0.18.2 - 25/03/2026
 
 Add support for RAW files
