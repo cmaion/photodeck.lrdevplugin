@@ -570,6 +570,41 @@ function PhotoDeckAPI.artists()
   return result, error_msg
 end
 
+function PhotoDeckAPI.watermarks(artist)
+  log_trace(string.format('PhotoDeckAPI.watermarks("%s")', artist or "?"))
+  local cacheKey = "watermarks/" .. PhotoDeckAPI.username .. "/" .. (artist or "?")
+  local result = PhotoDeckAPICache[cacheKey]
+  local response, error_msg = nil
+  if not result then
+    result = {}
+    result[""] = {
+      name = LOC("$$$/PhotoDeck/API/Watermarks/Default=PhotoDeck default"),
+    }
+    result["none"] = {
+      name = LOC("$$$/PhotoDeck/API/Watermarks/None=None"),
+    }
+    if artist and artist ~= "" then
+      response, error_msg = PhotoDeckAPI.request("GET", "/artists/" .. artist .. "/watermarks.xml", { view = "details" })
+      local watermarks = PhotoDeckAPIXSLT.transform(response, PhotoDeckAPIXSLT.watermarks)
+      if watermarks then
+        for uuid, watermark in pairs(watermarks) do
+          result[uuid] = watermark
+          if watermark.filename and watermark.filename ~= "" then
+            result[uuid]["name"] = LOC("$$$/PhotoDeck/API/Watermarks/File=File:") .. " <" .. watermark.filename .. ">"
+          else
+            result[uuid]["name"] = LOC("$$$/PhotoDeck/API/Watermarks/Text=Text:") .. " " .. watermark.text
+          end
+        end
+      end
+    end
+    if not error_msg then
+      PhotoDeckAPICache[cacheKey] = result
+    end
+    -- log_trace(printTable(result))
+  end
+  return result, error_msg
+end
+
 function PhotoDeckAPI.galleries(urlname)
   log_trace(string.format('PhotoDeckAPI.galleries("%s")', urlname))
   local galleries
@@ -1603,6 +1638,9 @@ function PhotoDeckAPI.updatePhoto(photoId, urlname, attributes, handleNotFound)
       mime_type = attributes.mimeType or "application/octet-stream"
       params, upload_location_requested, file_size = buildMediaUploadParams(attributes.contentPath, mime_type)
       upload_attempts = upload_attempts + 1
+      if attributes.watermarkId then
+        table.insert(params, { name = "media[watermark_uuid]", value = attributes.watermarkId })
+      end
     end
     if attributes.contentUploadLocation then
       table.insert(params, { name = "media[content][upload_location]", value = attributes.contentUploadLocation })

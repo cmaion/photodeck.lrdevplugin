@@ -81,6 +81,27 @@ return t
 ]=====]
   .. xsltfooter
 
+PhotoDeckAPIXSLT.watermarks = xsltheader
+  .. [=====[
+  <xsl:template match='/reply/watermarks'>
+local t = {}
+    <xsl:for-each select='watermark'>
+t["<xsl:value-of select='uuid'/>"] = {
+     text = "<xsl:value-of select='text'/>",
+     filename = "<xsl:value-of select='file-name'/>",
+     width = "<xsl:value-of select='width'/>",
+     height = "<xsl:value-of select='height'/>",
+     strength = "<xsl:value-of select='strength'/>",
+     position = "<xsl:value-of select='position'/>",
+     tile = <xsl:value-of select='tile'/>,
+     default = <xsl:value-of select='default'/>,
+}
+    </xsl:for-each>
+return t
+  </xsl:template>
+]=====]
+  .. xsltfooter
+
 PhotoDeckAPIXSLT.galleries = xsltheader
   .. [=====[
   <xsl:template match='/reply/galleries'>

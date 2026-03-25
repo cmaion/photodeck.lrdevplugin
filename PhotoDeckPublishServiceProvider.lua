@@ -63,6 +63,7 @@ publishServiceProvider.exportPresetFields = {
   { key = "apiSecret", default = "" },
   { key = "websiteChosen", default = "" },
   { key = "artistChosen", default = nil },
+  { key = "watermarkChosen", default = "" },
   { key = "uploadOnRepublish", default = false },
   { key = "updateMetadataOnRepublish", default = true },
 }
@@ -213,6 +214,7 @@ function publishServiceProvider.processRenderedPhotos(functionContext, exportCon
   local website
   local websiteuuid = nil
   local artistuuid = exportSettings.artistChosen
+  local watermarkuuid = exportSettings.watermarkChosen
 
   if isPublish then
     website, error_msg = PhotoDeckAPI.website(urlname)
@@ -289,6 +291,9 @@ function publishServiceProvider.processRenderedPhotos(functionContext, exportCon
           end
           if gallery then
             photoAttributes.publishToGallery = gallery.uuid
+          end
+          if watermarkuuid and watermarkuuid ~= "" then
+            photoAttributes.watermarkId = watermarkuuid
           end
           photoAttributes.lrPhoto = photo
 

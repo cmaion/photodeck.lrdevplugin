@@ -14,9 +14,114 @@ local function updateWebsiteName(propertyTable, key, value)
   propertyTable.websiteName = propertyTable.websites[value].title
 end
 
+-- Load available websites
+local function loadWebsites(propertyTable)
+  if PhotoDeckAPI.loggedin then
+    local websites, error_msg
+    websites, error_msg = PhotoDeckAPI.websites()
+    if error_msg then
+      propertyTable.connectionStatus = LOC("$$$/PhotoDeck/ConnectionStatus/FailedLoadingWebsite=Couldn't get your website: ^1", error_msg)
+      propertyTable.loggedin = PhotoDeckAPI.loggedin
+    else
+      propertyTable.websites = websites
+      propertyTable.websiteChoices = {}
+      local websitesCount = 0
+      local firstWebsite = nil
+      local foundCurrent = false
+      for k, v in pairs(websites) do
+        websitesCount = websitesCount + 1
+        if not firstWebsite then
+          firstWebsite = k
+        end
+        if k == propertyTable.websiteChosen then
+          foundCurrent = true
+        end
+        table.insert(propertyTable.websiteChoices, { title = v.title .. " (" .. v.hostname .. ")", value = k })
+      end
+      if not foundCurrent then
+        -- automatically select first website
+        propertyTable.websiteChosen = firstWebsite
+      end
+      propertyTable.multipleWebsites = websitesCount > 1
+      updateWebsiteName(propertyTable, nil, propertyTable.websiteChosen)
+    end
+  end
+end
+
 -- Updates the media library name in the plugin settings
 local function updateArtistName(propertyTable, key, value)
   propertyTable.artistName = propertyTable.artists[value].name
+end
+
+-- Load available media libraries
+local function loadArtists(propertyTable)
+  if PhotoDeckAPI.loggedin then
+    local artists, error_msg
+    artists, error_msg = PhotoDeckAPI.artists()
+    if error_msg then
+      propertyTable.connectionStatus = LOC("$$$/PhotoDeck/ConnectionStatus/FailedLoadingArtists=Couldn't get your media libraries: ^1", error_msg)
+      propertyTable.loggedin = PhotoDeckAPI.loggedin
+    else
+      propertyTable.artists = artists
+      propertyTable.artistChoices = {}
+      local artistsCount = 0
+      local firstArtist = nil
+      local foundCurrent = false
+      for k, v in pairs(artists) do
+        artistsCount = artistsCount + 1
+        if not firstArtist then
+          firstArtist = k
+        end
+        if k == propertyTable.artistChosen then
+          foundCurrent = true
+        end
+        table.insert(propertyTable.artistChoices, { title = v.name, value = k })
+      end
+      if not foundCurrent then
+        -- automatically select first artist
+        propertyTable.artistChosen = firstArtist
+      end
+      propertyTable.multipleArtists = artistsCount > 1
+      updateArtistName(propertyTable, nil, propertyTable.artistChosen)
+    end
+  end
+end
+
+-- Updates the watermark name in the plugin settings
+local function updateWatermarkName(propertyTable, key, value)
+  local watermark = propertyTable.watermarks[value or ""]
+  if watermark then
+    propertyTable.watermarkName = watermark.name
+  else
+    propertyTable.watermarkName = nil
+  end
+end
+
+-- Load available watermarks
+local function loadWatermarks(propertyTable)
+  if PhotoDeckAPI.loggedin then
+    local watermarks, error_msg
+    watermarks, error_msg = PhotoDeckAPI.watermarks(propertyTable.artistChosen)
+    if error_msg then
+      propertyTable.connectionStatus = LOC("$$$/PhotoDeck/ConnectionStatus/FailedLoadingWatermarks=Couldn't get your watermarks: ^1", error_msg)
+      propertyTable.loggedin = PhotoDeckAPI.loggedin
+    else
+      propertyTable.watermarks = watermarks
+      propertyTable.watermarkChoices = {}
+      local foundCurrent = false
+      for k, v in pairs(watermarks) do
+        if k == propertyTable.watermarkChosen then
+          foundCurrent = true
+        end
+        table.insert(propertyTable.watermarkChoices, { title = v.name, value = k })
+      end
+      if not foundCurrent then
+        -- automatically select default
+        propertyTable.watermarkChosen = ""
+      end
+      updateWatermarkName(propertyTable, nil, propertyTable.watermarkChosen)
+    end
+  end
 end
 
 -- Ping PhotoDeck and show result in plugin settings
@@ -50,67 +155,11 @@ local function login(propertyTable)
     end
     propertyTable.loggedin = PhotoDeckAPI.loggedin
 
+    loadWebsites(propertyTable)
+    loadArtists(propertyTable)
+    loadWatermarks(propertyTable)
+
     if PhotoDeckAPI.loggedin then
-      -- get available websites
-      local websites
-      websites, error_msg = PhotoDeckAPI.websites()
-      if error_msg then
-        propertyTable.connectionStatus = LOC("$$$/PhotoDeck/ConnectionStatus/FailedLoadingWebsite=Couldn't get your website: ^1", error_msg)
-        propertyTable.loggedin = PhotoDeckAPI.loggedin
-      else
-        propertyTable.websites = websites
-        propertyTable.websiteChoices = {}
-        local websitesCount = 0
-        local firstWebsite = nil
-        local foundCurrent = false
-        for k, v in pairs(propertyTable.websites) do
-          websitesCount = websitesCount + 1
-          if not firstWebsite then
-            firstWebsite = k
-          end
-          if k == propertyTable.websiteChosen then
-            foundCurrent = true
-          end
-          table.insert(propertyTable.websiteChoices, { title = v.title .. " (" .. v.hostname .. ")", value = k })
-        end
-        if not foundCurrent then
-          -- automatically select first website
-          propertyTable.websiteChosen = firstWebsite
-        end
-        propertyTable.multipleWebsites = websitesCount > 1
-        updateWebsiteName(propertyTable, nil, propertyTable.websiteChosen)
-      end
-
-      -- get available media libraries
-      local artists
-      artists, error_msg = PhotoDeckAPI.artists()
-      if error_msg then
-        propertyTable.connectionStatus = LOC("$$$/PhotoDeck/ConnectionStatus/FailedLoadingArtist=Couldn't get your media library: ^1", error_msg)
-        propertyTable.loggedin = PhotoDeckAPI.loggedin
-      else
-        propertyTable.artists = artists
-        propertyTable.artistChoices = {}
-        local artistsCount = 0
-        local firstArtist = nil
-        local foundCurrent = false
-        for k, v in pairs(propertyTable.artists) do
-          artistsCount = artistsCount + 1
-          if not firstArtist then
-            firstArtist = k
-          end
-          if k == propertyTable.artistChosen then
-            foundCurrent = true
-          end
-          table.insert(propertyTable.artistChoices, { title = v.name, value = k })
-        end
-        if not foundCurrent then
-          -- automatically select first artist
-          propertyTable.artistChosen = firstArtist
-        end
-        propertyTable.multipleArtists = artistsCount > 1
-        updateArtistName(propertyTable, nil, propertyTable.artistChosen)
-      end
-
       -- show synchronization message if in progress
       if not propertyTable.canSynchronize then
         propertyTable.synchronizeGalleriesResult = LOC("$$$/PhotoDeck/SynchronizeStatus/InProgress=In progress")
@@ -207,6 +256,7 @@ local function chooseWebsite(propertyTable)
   local result = LrDialogs.presentModalDialog({
     title = LOC("$$$/PhotoDeck/WebsitesDialog/Title=PhotoDeck Websites"),
     contents = c,
+    cancelVerb = "< exclude >",
   })
   return propertyTable
 end
@@ -225,6 +275,26 @@ local function chooseArtist(propertyTable)
   local result = LrDialogs.presentModalDialog({
     title = LOC("$$$/PhotoDeck/ArtistsDialog/Title=PhotoDeck Media libaries"),
     contents = c,
+    cancelVerb = "< exclude >",
+  })
+  return propertyTable
+end
+
+-- What happens when user clicks "Change watermark" in plugin settings
+local function chooseWatermark(propertyTable)
+  local f = LrView.osFactory()
+  local c = f:row({
+    spacing = f:dialog_spacing(),
+    bind_to_object = propertyTable,
+    f:popup_menu({
+      items = LrView.bind("watermarkChoices"),
+      value = LrView.bind("watermarkChosen"),
+    }),
+  })
+  local result = LrDialogs.presentModalDialog({
+    title = LOC("$$$/PhotoDeck/WatermarksDialog/Title=PhotoDeck watermarks"),
+    contents = c,
+    cancelVerb = "< exclude >",
   })
   return propertyTable
 end
@@ -243,11 +313,13 @@ function PhotoDeckDialogs.startDialog(propertyTable)
   propertyTable.loggedin = false
   propertyTable.websiteChoices = {}
   propertyTable.artistChoices = {}
+  propertyTable.watermarkChoices = {}
   propertyTable.galleryDisplayStyles = {}
   propertyTable.multipleWebsites = false
   propertyTable.websiteName = ""
   propertyTable.multipleArtists = false
   propertyTable.artistName = ""
+  propertyTable.watermarkName = ""
   propertyTable.canSynchronize = PhotoDeckAPI.canSynchronize
   propertyTable.synchronizeGalleriesResult = ""
 
@@ -265,6 +337,14 @@ function PhotoDeckDialogs.startDialog(propertyTable)
 
   propertyTable:addObserver("websiteChosen", updateWebsiteName)
   propertyTable:addObserver("artistChosen", updateArtistName)
+  propertyTable:addObserver("artistChosen", function()
+    propertyTable.watermarkChosen = ""
+    propertyTable.watermarkChoices = {}
+    LrTasks.startAsyncTask(function()
+      loadWatermarks(propertyTable)
+    end, "PhotoDeckAPI Watermarks")
+  end)
+  propertyTable:addObserver("watermarkChosen", updateWatermarkName)
 
   local keysAreValid = PhotoDeckAPI.hasDistributionKeys
     or (propertyTable.apiKey and propertyTable.apiKey ~= "" and propertyTable.apiSecret and propertyTable.apiSecret ~= "")
@@ -420,6 +500,7 @@ function PhotoDeckDialogs.sectionsForTopOfDialog(f, propertyTable)
 
     f:row({
       bind_to_object = propertyTable,
+
       f:column({
         f:row({
           f:static_text({
@@ -450,20 +531,53 @@ function PhotoDeckDialogs.sectionsForTopOfDialog(f, propertyTable)
     }),
 
     f:row({
+      bind_to_object = propertyTable,
       margin_top = 10,
-      f:static_text({
-        title = LOC("$$$/PhotoDeck/PublishOptionsDialog/WatermarkingTitle=Watermark: "),
-        width = LrView.share("user_label_width"),
-        alignment = "right",
+
+      f:column({
+        f:row({
+          f:static_text({
+            title = LOC("$$$/PhotoDeck/PublishOptionsDialog/WatermarkTitle=Watermark: "),
+            width = LrView.share("user_label_width"),
+            alignment = "right",
+          }),
+          f:static_text({
+            visible = LrBinding.andAllKeys("loggedin"),
+            title = LrView.bind("watermarkName"),
+            width = 300,
+            font = "<system/small/bold>",
+          }),
+        }),
       }),
-      f:static_text({
-        title = LOC(
-          "$$$/PhotoDeck/PublishOptionsDialog/WatermarkingNote=the watermark set as default watermark in PhotoDeck's uploder will be applied to the images shown on your website. Note that Lightroom's own watermark feature (below), if selected, is applied before the upload to PhotoDeck, and therefore will be visible also on high-res images."
-        ),
-        font = "<system/small>",
-        fill_horizontal = 1,
-        height_in_lines = -1,
-        width_in_chars = 40,
+
+      f:column({
+        f:push_button({
+          title = LOC("$$$/PhotoDeck/PublishOptionsDialog/WatermarkChangeAction=Change"),
+          visible = LrBinding.andAllKeys("loggedin"),
+          enabled = LrBinding.andAllKeys("loggedin"),
+          action = function()
+            propertyTable = chooseWatermark(propertyTable)
+          end,
+        }),
+      }),
+    }),
+    f:row({
+      f:column({
+        f:static_text({
+          title = "",
+          width = LrView.share("user_label_width"),
+        }),
+      }),
+      f:column({
+        f:static_text({
+          title = LOC(
+            "$$$/PhotoDeck/PublishOptionsDialog/WatermarkNote=Note that Lightroom's own watermark feature (below), if selected, is applied before the upload to PhotoDeck, and therefore will be visible also on high-res images."
+          ),
+          font = "<system/small>",
+          fill_horizontal = 1,
+          height_in_lines = -1,
+          width_in_chars = 40,
+        }),
       }),
     }),
 
