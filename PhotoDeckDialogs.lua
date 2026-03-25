@@ -11,7 +11,12 @@ local PhotoDeckDialogs = {}
 
 -- Updates the website name in the plugin settings
 local function updateWebsiteName(propertyTable, key, value)
-  propertyTable.websiteName = propertyTable.websites[value].title
+  local website = propertyTable.websites and propertyTable.websites[value]
+  if website then
+    propertyTable.websiteName = website.title
+  else
+    propertyTable.websiteName = ""
+  end
 end
 
 -- Load available websites
@@ -50,7 +55,12 @@ end
 
 -- Updates the media library name in the plugin settings
 local function updateArtistName(propertyTable, key, value)
-  propertyTable.artistName = propertyTable.artists[value].name
+  local artist = propertyTable.artists and propertyTable.artists[value]
+  if artist then
+    propertyTable.artistName = artist.name
+  else
+    propertyTable.artistName = ""
+  end
 end
 
 -- Load available media libraries
@@ -89,7 +99,7 @@ end
 
 -- Updates the watermark name in the plugin settings
 local function updateWatermarkName(propertyTable, key, value)
-  local watermark = propertyTable.watermarks[value or ""]
+  local watermark = propertyTable.watermarks and propertyTable.watermarks[value or ""]
   if watermark then
     propertyTable.watermarkName = watermark.name
   else
@@ -361,8 +371,6 @@ end
 
 -- Top plugin settings
 function PhotoDeckDialogs.sectionsForTopOfDialog(f, propertyTable)
-  local isPublish = not not propertyTable.LR_publishService
-
   local apiCredentials = {
     title = LOC("$$$/PhotoDeck/ApiKeyDialog/Title=PhotoDeck API Keys"),
     synopsis = LrView.bind("connectionStatus"),
@@ -537,6 +545,7 @@ function PhotoDeckDialogs.sectionsForTopOfDialog(f, propertyTable)
       f:column({
         f:row({
           f:static_text({
+            visible = LrBinding.andAllKeys("loggedin"),
             title = LOC("$$$/PhotoDeck/PublishOptionsDialog/WatermarkTitle=Watermark: "),
             width = LrView.share("user_label_width"),
             alignment = "right",
@@ -562,6 +571,8 @@ function PhotoDeckDialogs.sectionsForTopOfDialog(f, propertyTable)
       }),
     }),
     f:row({
+      bind_to_object = propertyTable,
+
       f:column({
         f:static_text({
           title = "",
@@ -573,6 +584,7 @@ function PhotoDeckDialogs.sectionsForTopOfDialog(f, propertyTable)
           title = LOC(
             "$$$/PhotoDeck/PublishOptionsDialog/WatermarkNote=Note that Lightroom's own watermark feature (below), if selected, is applied before the upload to PhotoDeck, and therefore will be visible also on high-res images."
           ),
+          visible = LrBinding.andAllKeys("loggedin"),
           font = "<system/small>",
           fill_horizontal = 1,
           height_in_lines = -1,
@@ -586,6 +598,7 @@ function PhotoDeckDialogs.sectionsForTopOfDialog(f, propertyTable)
 
       f:checkbox({
         title = LOC("$$$/PhotoDeck/PublishOptionsDialog/UpdateMetadataOnRepublish=Update photo metadata on PhotoDeck when re-publishing"),
+        visible = LrBinding.andAllKeys("loggedin", "LR_publishService"),
         value = LrView.bind("updateMetadataOnRepublish"),
       }),
     }),
@@ -595,11 +608,14 @@ function PhotoDeckDialogs.sectionsForTopOfDialog(f, propertyTable)
 
       f:checkbox({
         title = LOC("$$$/PhotoDeck/PublishOptionsDialog/UploadOnRepublish=Re-upload photo on PhotoDeck when re-publishing"),
+        visible = LrBinding.andAllKeys("loggedin", "LR_publishService"),
         value = LrView.bind("uploadOnRepublish"),
       }),
     }),
 
     f:row({
+      bind_to_object = propertyTable,
+
       f:push_button({
         title = LOC("$$$/PhotoDeck/PublishOptionsDialog/SynchronizeGalleries/Action=Import PhotoDeck galleries"),
         action = function()
@@ -613,11 +629,13 @@ function PhotoDeckDialogs.sectionsForTopOfDialog(f, propertyTable)
             synchronizeGalleries(propertyTable)
           end
         end,
+        visible = LrBinding.andAllKeys("loggedin", "LR_publishService"),
         enabled = LrBinding.andAllKeys("loggedin", "canSynchronize"),
       }),
 
       f:static_text({
         title = LrView.bind("synchronizeGalleriesResult"),
+        visible = LrBinding.andAllKeys("loggedin", "LR_publishService"),
         alignment = "right",
         fill_horizontal = 1,
         height_in_lines = 1,
@@ -630,9 +648,7 @@ function PhotoDeckDialogs.sectionsForTopOfDialog(f, propertyTable)
     table.insert(dialogs, apiCredentials)
   end
   table.insert(dialogs, userAccount)
-  if isPublish then
-    table.insert(dialogs, publishSettings)
-  end
+  table.insert(dialogs, publishSettings)
   return dialogs
 end
 
