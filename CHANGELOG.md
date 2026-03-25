@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## 0.18.2 - 25/03/2026
+
+Add support for RAW files
+Can prevent photo metadata from being updated on PhotoDeck when changed in Lightroom
+
 ## 0.18.1 - 23/03/2026
 
 Add upload retry mechanisms and fallback to secondary upload endpoints
