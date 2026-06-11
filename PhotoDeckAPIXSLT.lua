@@ -156,6 +156,9 @@ local t = {
 <xsl:if test="file-name">
   filename = [====[<xsl:value-of select='file-name'/>]====],
 </xsl:if>
+<xsl:if test="mime-type">
+  mimetype = [====[<xsl:value-of select='mime-type'/>]====],
+</xsl:if>
 <xsl:if test="title">
   title = [====[<xsl:value-of select='title'/>]====],
 </xsl:if>

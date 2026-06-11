@@ -1682,6 +1682,11 @@ function PhotoDeckAPI.updatePhoto(photoId, urlname, attributes, handleNotFound)
         photoId = media.uuid
       end
 
+      if media.mimetype then
+        -- Use mime time as detected by backend
+        mime_type = media.mimetype
+      end
+
       if upload_location_requested then
         local retryable
         local attempts_on_location = 0
