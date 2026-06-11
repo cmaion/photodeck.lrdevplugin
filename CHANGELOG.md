@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## 0.18.4 - 11/06/2026
+
+Fix for mismatched MIME Types
+
 ## 0.18.3 - 25/03/2026
 
 Add ability to select PhotoDeck watermark
