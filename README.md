@@ -4,6 +4,8 @@ PhotoDeck Publish Plugin for Lightroom
 The PhotoDeck Publish plugin was created to provide a publish service
 for PhotoDeck within Adobe Lightroom.
 
+The plugin is available in English, French and German.
+
 Installation
 ============
 
@@ -31,7 +33,6 @@ You will also be able to import the existing PhotoDeck Galleries structure into 
 
 Please note that photos that have not been published in PhotoDeck Galleries
 by this plugin will not show up in Lightroom.
-
 
 Support
 =======

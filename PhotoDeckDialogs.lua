@@ -727,8 +727,8 @@ PhotoDeckDialogs.viewForCollectionSettings = function(f, publishSettings, info)
             LOC("$$$/PhotoDeck/CollectionSettingsDialog/ConnectionStatus/GalleryFailed=Error reading gallery from PhotoDeck: ^1", error_msg)
         else
           info.collectionSettings.LR_liveName = gallery.name
-          info.collectionSettings.description = gallery.description
-          info.collectionSettings.display_style = gallery.displaystyle
+          info.collectionSettings.description = gallery.description or ""
+          info.collectionSettings.display_style = gallery.gallery_display_style_uuid
         end
       end
     end

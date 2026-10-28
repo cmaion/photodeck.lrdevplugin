@@ -123,7 +123,7 @@ end
 local function catalogKeyForPhotoDeckPhotoId(photo, websiteuuid)
   local catalogKey = websiteuuid
   if photo:getRawMetadata("isVirtualCopy") then
-    -- virtual copy shares the same metadata catalog entries it seems, so we use a different key to store the PhotoDeck ID
+    -- Distinguish a virtual copy's remote media by its local identifier.
     catalogKey = catalogKey .. "/" .. tostring(photo.localIdentifier)
   end
   return catalogKey
@@ -160,7 +160,8 @@ local function getPhotoDeckPhotoIdInCatalogOrLock(catalog, rendition, photo, web
 
   repeat -- Avoid race condition while importing the same photo in multiple galleries in parallel
     catalog:withPrivateWriteAccessDo(function(context)
-      -- NOTE: we are using rendition.publishedPhotoId only as a last resort, as the photo might have seen it's UUID change in another gallery (e.g., following a manual deletion directly within PhotoDeck, followed by a publication in another gallery) -- rendition.publishedPhotoId might thus be outdated
+      -- Prefer the catalog mapping: publication in another gallery may have
+      -- replaced the remote media, leaving rendition.publishedPhotoId stale.
       local photoIds = getPhotoDeckPhotoIdsStoredInCatalog(photo)
       if photo:getRawMetadata("isVirtualCopy") then
         photoId = photoIds[catalogKey] or rendition.publishedPhotoId
@@ -344,9 +345,9 @@ function publishServiceProvider.processRenderedPhotos(functionContext, exportCon
 
         if not error_msg and upload and upload.uuid and upload.uuid ~= "" then
           catalog:withPrivateWriteAccessDo(function(context)
-            if upload.filename and upload.filename ~= "" and upload.filename ~= photo:getPropertyForPlugin(_PLUGIN, "fileName") then
+            if upload.file_name and upload.file_name ~= "" and upload.file_name ~= photo:getPropertyForPlugin(_PLUGIN, "fileName") then
               -- Store PhotoDeck file name
-              photo:setPropertyForPlugin(_PLUGIN, "fileName", upload.filename)
+              photo:setPropertyForPlugin(_PLUGIN, "fileName", upload.file_name)
             end
 
             if isPublish then
@@ -407,7 +408,7 @@ publishServiceProvider.deletePhotosFromPublishedCollection = function(publishSet
   local photoIdsToUnpublish = {}
   local result
   local error_msg
-  -- this next bit is stupid. Why is there no catalog:getPhotoByRemoteId or similar
+  -- Index published photos by remote ID to resolve Lightroom's removal list.
   local publishedPhotos = collection:getPublishedPhotos()
   local publishedPhotoById = {}
   for _, pp in pairs(publishedPhotos) do
@@ -449,14 +450,10 @@ publishServiceProvider.deletePhotosFromPublishedCollection = function(publishSet
     end
   elseif photoIdsToUnpublishCount > 0 then
     -- More than one photo needs to be unpublished. Use batched API endpoint.
-    result, error_msg = PhotoDeckAPI.unpublishPhotos(photoIdsToUnpublish, galleryId)
+    result, error_msg = PhotoDeckAPI.unpublishPhotos(photoIdsToUnpublish, galleryId, deletedCallback)
 
     if error_msg then
       LrErrors.throwUserError(LOC("$$$/PhotoDeck/DeletePhotos/ErrorUnpublishingPhotos=Error unpublishing photos: ^1", error_msg))
-    else
-      for _, photoId in ipairs(photoIdsToUnpublish) do
-        deletedCallback(photoId)
-      end
     end
   end
 
@@ -474,14 +471,10 @@ publishServiceProvider.deletePhotosFromPublishedCollection = function(publishSet
     end
   elseif photoIdsToDeleteCount > 0 then
     -- More than one photo needs to be deleted. Use batched API endpoint.
-    result, error_msg = PhotoDeckAPI.deletePhotos(photoIdsToDelete)
+    result, error_msg = PhotoDeckAPI.deletePhotos(photoIdsToDelete, deletedCallback)
 
     if error_msg then
       LrErrors.throwUserError(LOC("$$$/PhotoDeck/DeletePhotos/ErrorDeletingPhotos=Error deleting photos: ^1", error_msg))
-    else
-      for _, photoId in ipairs(photoIdsToDelete) do
-        deletedCallback(photoId)
-      end
     end
   end
 end
@@ -547,8 +540,8 @@ publishServiceProvider.goToPublishedPhoto = function(publishSettings, info)
   log_trace("publishServiceProvider.goToPublishedPhoto")
   local catalog = LrApplication.activeCatalog()
 
-  -- The following is just ugly and not robust, but Lightroom doesn't gives us the LrPublishedCollection object, just it's name and parents.
-  -- So we need to go to it's parent and find the parent children that matches the collection name...
+  -- Lightroom supplies the collection's name and parents rather than its object.
+  -- Find the matching collection under that parent to obtain its public URL.
   local publishedCollectionParent = info.publishService
   for _, parent in pairs(info.publishedCollectionInfo.parents) do
     publishedCollectionParent = catalog:getPublishedCollectionByLocalIdentifier(parent.localCollectionId)
