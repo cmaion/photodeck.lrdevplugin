@@ -3,6 +3,7 @@ local LrDialogs = import("LrDialogs")
 local LrTasks = import("LrTasks")
 local LrView = import("LrView")
 local LrProgressScope = import("LrProgressScope")
+local LrFunctionContext = import("LrFunctionContext")
 
 local PhotoDeckAPI = require("PhotoDeckAPI")
 local PhotoDeckUtils = require("PhotoDeckUtils")
@@ -21,12 +22,12 @@ end
 
 -- Load available websites
 local function loadWebsites(propertyTable)
-  if PhotoDeckAPI.loggedin then
+  if PhotoDeckAPI.isConnected() then
     local websites, error_msg
     websites, error_msg = PhotoDeckAPI.websites()
     if error_msg then
       propertyTable.connectionStatus = LOC("$$$/PhotoDeck/ConnectionStatus/FailedLoadingWebsite=Couldn't get your website: ^1", error_msg)
-      propertyTable.loggedin = PhotoDeckAPI.loggedin
+      propertyTable.loggedin = PhotoDeckAPI.isConnected()
     else
       propertyTable.websites = websites
       propertyTable.websiteChoices = {}
@@ -65,12 +66,12 @@ end
 
 -- Load available media libraries
 local function loadArtists(propertyTable)
-  if PhotoDeckAPI.loggedin then
+  if PhotoDeckAPI.isConnected() then
     local artists, error_msg
     artists, error_msg = PhotoDeckAPI.artists()
     if error_msg then
       propertyTable.connectionStatus = LOC("$$$/PhotoDeck/ConnectionStatus/FailedLoadingArtists=Couldn't get your media libraries: ^1", error_msg)
-      propertyTable.loggedin = PhotoDeckAPI.loggedin
+      propertyTable.loggedin = PhotoDeckAPI.isConnected()
     else
       propertyTable.artists = artists
       propertyTable.artistChoices = {}
@@ -109,12 +110,12 @@ end
 
 -- Load available watermarks
 local function loadWatermarks(propertyTable)
-  if PhotoDeckAPI.loggedin then
+  if PhotoDeckAPI.isConnected() then
     local watermarks, error_msg
     watermarks, error_msg = PhotoDeckAPI.watermarks(propertyTable.artistChosen)
     if error_msg then
       propertyTable.connectionStatus = LOC("$$$/PhotoDeck/ConnectionStatus/FailedLoadingWatermarks=Couldn't get your watermarks: ^1", error_msg)
-      propertyTable.loggedin = PhotoDeckAPI.loggedin
+      propertyTable.loggedin = PhotoDeckAPI.isConnected()
     else
       propertyTable.watermarks = watermarks
       propertyTable.watermarkChoices = {}
@@ -134,46 +135,64 @@ local function loadWatermarks(propertyTable)
   end
 end
 
--- Ping PhotoDeck and show result in plugin settings
-local function ping(propertyTable)
+-- Restore an existing connection, or explicitly authorize in the browser.
+local function login(propertyTable, authorize)
+  if propertyTable.oauthBusy then
+    return
+  end
+  propertyTable.oauthBusy = true
+  if authorize then
+    propertyTable.loggedin = false
+  end
   propertyTable.connectionStatus = LOC("$$$/PhotoDeck/ConnectionStatus/Connecting=Connecting to PhotoDeck^.")
   LrTasks.startAsyncTask(function()
-    PhotoDeckAPI.connect(propertyTable.apiKey, propertyTable.apiSecret, propertyTable.username, propertyTable.password)
-    local ping, error_msg = PhotoDeckAPI.ping()
-    if error_msg then
-      propertyTable.connectionStatus = LOC("$$$/PhotoDeck/ConnectionStatus/Failed=Connection failed: ^1", error_msg)
-    elseif propertyTable.loggedin then
-      propertyTable.connectionStatus = LOC("$$$/PhotoDeck/ConnectionStatus/Connected=Connected")
-    else
-      propertyTable.connectionStatus = LOC("$$$/PhotoDeck/ConnectionStatus/ConnectedPleaseLogin=Connected, please log in")
-    end
-  end, "PhotoDeckAPI Ping")
-end
-
--- Login in PhotoDeck and show result in plugin settings
-local function login(propertyTable)
-  propertyTable.connectionStatus = LOC("$$$/PhotoDeck/ConnectionStatus/LoggingIn=Logging in^.")
-  LrTasks.startAsyncTask(function()
-    PhotoDeckAPI.connect(propertyTable.apiKey, propertyTable.apiSecret, propertyTable.username, propertyTable.password)
-    local result, error_msg = PhotoDeckAPI.whoami()
-    if error_msg then
-      propertyTable.connectionStatus = error_msg
-    elseif not PhotoDeckAPI.loggedin then
-      propertyTable.connectionStatus = LOC("$$$/PhotoDeck/ConnectionStatus/CredentialsError=Couldn't log in using those credentials")
-    else
-      propertyTable.connectionStatus = LOC("$$$/PhotoDeck/ConnectionStatus/LoggedInAs=Logged in as ^1 ^2", result.firstname, result.lastname)
-    end
-    propertyTable.loggedin = PhotoDeckAPI.loggedin
-
-    loadWebsites(propertyTable)
-    loadArtists(propertyTable)
-    loadWatermarks(propertyTable)
-
-    if PhotoDeckAPI.loggedin then
-      -- show synchronization message if in progress
-      if not propertyTable.canSynchronize then
-        propertyTable.synchronizeGalleriesResult = LOC("$$$/PhotoDeck/SynchronizeStatus/InProgress=In progress")
+    local progress
+    local ok = LrTasks.pcall(function()
+      PhotoDeckAPI.connect(propertyTable)
+      if authorize then
+        progress = LrProgressScope({ title = LOC("$$$/PhotoDeck/OAuth/BrowserPrompt=Complete PhotoDeck authorization in your browser") })
+        progress:setCancelable(true)
+        local success, message = PhotoDeckAPI.authorize(propertyTable, function()
+          return propertyTable.oauthCanceled or progress:isCanceled()
+        end)
+        progress:done()
+        progress = nil
+        if not success then
+          propertyTable.loggedin = false
+          propertyTable.connectionStatus = message
+          return
+        end
       end
+      local result, error_msg = PhotoDeckAPI.whoami()
+      if error_msg then
+        propertyTable.connectionStatus = error_msg
+      elseif not PhotoDeckAPI.isConnected() or not result then
+        propertyTable.connectionStatus = LOC("$$$/PhotoDeck/OAuth/ReconnectRequired=Please reconnect to PhotoDeck in the publish service settings")
+      else
+        propertyTable.connectionStatus = LOC("$$$/PhotoDeck/ConnectionStatus/LoggedInAs=Logged in as ^1 ^2", result.firstname or "", result.lastname or "")
+      end
+      propertyTable.loggedin = result ~= nil and PhotoDeckAPI.isConnected()
+
+      if propertyTable.loggedin then
+        loadWebsites(propertyTable)
+        loadArtists(propertyTable)
+        loadWatermarks(propertyTable)
+      end
+
+      if PhotoDeckAPI.isConnected() then
+        -- show synchronization message if in progress
+        if not propertyTable.canSynchronize then
+          propertyTable.synchronizeGalleriesResult = LOC("$$$/PhotoDeck/SynchronizeStatus/InProgress=In progress")
+        end
+      end
+    end)
+    if progress then
+      LrTasks.pcall(function() progress:done() end)
+    end
+    propertyTable.oauthBusy = false
+    if not ok then
+      propertyTable.loggedin = false
+      propertyTable.connectionStatus = LOC("$$$/PhotoDeck/API/InvalidResponse=Invalid response from PhotoDeck")
     end
   end, "PhotoDeckAPI Login")
 end
@@ -188,7 +207,7 @@ local function synchronizeGalleries(propertyTable)
   })
   progressScope:setCancelable(true)
   LrTasks.startAsyncTask(function()
-    PhotoDeckAPI.connect(propertyTable.apiKey, propertyTable.apiSecret, propertyTable.username, propertyTable.password)
+    PhotoDeckAPI.connect(propertyTable)
     local result, error_msg = PhotoDeckAPI.synchronizeGalleries(propertyTable.websiteChosen, propertyTable.LR_publishService, progressScope)
 
     if error_msg then
@@ -214,42 +233,47 @@ local function synchronizeGalleries(propertyTable)
   end, "PhotoDeckAPI galleries synchronization")
 end
 
--- API key & secret dialog
-function PhotoDeckDialogs.updateApiKeyAndSecret(propertyTable)
-  local f = LrView.osFactory()
-  local c = f:column({
-    bind_to_object = propertyTable,
-    spacing = f:dialog_spacing(),
-    f:row({
-      f:static_text({
-        title = LOC("$$$/PhotoDeck/ApiKeyDialog/ApiKey=API Key:"),
-        width = LrView.share("label_width"),
-        alignment = "right",
+-- Public OAuth client ID; no client secret is used by this native application.
+function PhotoDeckDialogs.updateClientId(propertyTable)
+  return LrFunctionContext.callWithContext("PhotoDeck OAuth client settings", function(context)
+    local f = LrView.osFactory()
+    local values = LrBinding.makePropertyTable(context)
+    values.oauthClientId = propertyTable.oauthClientId
+    local c = f:column({
+      bind_to_object = values,
+      spacing = f:dialog_spacing(),
+      f:row({
+        f:static_text({
+          title = LOC("$$$/PhotoDeck/OAuth/ClientId=OAuth client ID:"),
+          width = LrView.share("label_width"),
+          alignment = "right",
+        }),
+        f:edit_field({
+          value = LrView.bind("oauthClientId"),
+          immediate = false,
+          width_in_chars = 40,
+        }),
       }),
-      f:edit_field({
-        value = LrView.bind("apiKey"),
-        immediate = false,
-        width_in_chars = 40,
-      }),
-    }),
-    f:row({
-      f:static_text({
-        title = LOC("$$$/PhotoDeck/ApiKeyDialog/ApiSecret=API Secret:"),
-        width = LrView.share("label_width"),
-        alignment = "right",
-      }),
-      f:edit_field({
-        value = LrView.bind("apiSecret"),
-        immediate = false,
-        width_in_chars = 40,
-      }),
-    }),
-  })
-  local result = LrDialogs.presentModalDialog({
-    title = LOC("$$$/PhotoDeck/ApiKeyDialog/Title=PhotoDeck API Keys"),
-    contents = c,
-  })
-  return propertyTable
+    })
+    local result = LrDialogs.presentModalDialog({
+      title = LOC("$$$/PhotoDeck/OAuth/ClientSettings=PhotoDeck OAuth application"),
+      contents = c,
+    })
+    if result == "ok" and values.oauthClientId ~= propertyTable.oauthClientId then
+      propertyTable.oauthBusy = true
+      LrTasks.startAsyncTask(function()
+        local success, message = PhotoDeckAPI.disconnect(propertyTable)
+        propertyTable.loggedin = false
+        propertyTable.connectionStatus = message or LOC("$$$/PhotoDeck/OAuth/Disconnected=Not connected to PhotoDeck")
+        if success then
+          propertyTable.oauthClientId = values.oauthClientId
+          propertyTable.oauthConnectionId = nil
+        end
+        propertyTable.oauthBusy = false
+      end)
+    end
+    return propertyTable
+  end)
 end
 
 -- What happens when user clicks "Change website" in plugin settings
@@ -332,12 +356,15 @@ function PhotoDeckDialogs.startDialog(propertyTable)
   propertyTable.watermarkName = ""
   propertyTable.canSynchronize = PhotoDeckAPI.canSynchronize
   propertyTable.synchronizeGalleriesResult = ""
+  propertyTable.oauthBusy = false
+  propertyTable.oauthCanceled = false
+  -- Stop retaining obsolete password-based credentials in saved settings.
+  propertyTable.password, propertyTable.apiSecret = nil, nil
+  propertyTable.username, propertyTable.apiKey = nil, nil
 
   if propertyTable.LR_editingExistingPublishConnection == false then
-    -- new publish connection: reset credentials
-    propertyTable.username = nil
-    propertyTable.password = nil
-    PhotoDeckAPI.loggedin = false
+    -- A newly created service must not inherit another service's connection.
+    propertyTable.oauthConnectionId = nil
   end
 
   propertyTable:addObserver("loggedin", function()
@@ -351,28 +378,24 @@ function PhotoDeckDialogs.startDialog(propertyTable)
     propertyTable.watermarkChosen = ""
     propertyTable.watermarkChoices = {}
     LrTasks.startAsyncTask(function()
+      PhotoDeckAPI.connect(propertyTable)
       loadWatermarks(propertyTable)
     end, "PhotoDeckAPI Watermarks")
   end)
   propertyTable:addObserver("watermarkChosen", updateWatermarkName)
 
-  local keysAreValid = PhotoDeckAPI.hasDistributionKeys
-    or (propertyTable.apiKey and propertyTable.apiKey ~= "" and propertyTable.apiSecret and propertyTable.apiSecret ~= "")
-
-  if not keysAreValid then
-    propertyTable = PhotoDeckDialogs.updateApiKeyAndSecret(propertyTable)
-  end
-  if propertyTable.username and propertyTable.username ~= "" and propertyTable.password and propertyTable.password ~= "" and keysAreValid then
+  PhotoDeckAPI.connect(propertyTable)
+  if PhotoDeckAPI.isConnected() then
     login(propertyTable)
   else
-    ping(propertyTable)
+    propertyTable.connectionStatus = LOC("$$$/PhotoDeck/OAuth/Disconnected=Not connected to PhotoDeck")
   end
 end
 
 -- Top plugin settings
 function PhotoDeckDialogs.sectionsForTopOfDialog(f, propertyTable)
   local apiCredentials = {
-    title = LOC("$$$/PhotoDeck/ApiKeyDialog/Title=PhotoDeck API Keys"),
+    title = LOC("$$$/PhotoDeck/OAuth/ClientSettings=PhotoDeck OAuth application"),
     synopsis = LrView.bind("connectionStatus"),
 
     f:row({
@@ -380,32 +403,22 @@ function PhotoDeckDialogs.sectionsForTopOfDialog(f, propertyTable)
       f:column({
         f:row({
           f:static_text({
-            title = LOC("$$$/PhotoDeck/ApiKeyDialog/ApiKey=API Key:"),
+            title = LOC("$$$/PhotoDeck/OAuth/ClientId=OAuth client ID:"),
             width = LrView.share("label_width"),
             alignment = "right",
           }),
           f:static_text({
-            title = LrView.bind("apiKey"),
-            width_in_chars = 40,
-          }),
-        }),
-        f:row({
-          f:static_text({
-            title = LOC("$$$/PhotoDeck/ApiKeyDialog/ApiSecret=API Secret:"),
-            width = LrView.share("label_width"),
-            alignment = "right",
-          }),
-          f:static_text({
-            title = LrView.bind("apiSecret"),
+            title = LrView.bind("oauthClientId"),
             width_in_chars = 40,
           }),
         }),
       }),
       f:column({
         f:push_button({
-          title = LOC("$$$/PhotoDeck/ApiKeyDialog/ChangeAction=Change"),
+          title = LOC("$$$/PhotoDeck/OAuth/ChangeClientId=Change"),
+          enabled = LrBinding.negativeOfKey("oauthBusy"),
           action = function()
-            propertyTable = PhotoDeckDialogs.updateApiKeyAndSecret(propertyTable)
+            propertyTable = PhotoDeckDialogs.updateClientId(propertyTable)
           end,
         }),
       }),
@@ -417,39 +430,27 @@ function PhotoDeckDialogs.sectionsForTopOfDialog(f, propertyTable)
 
     f:row({
       bind_to_object = propertyTable,
-      f:column({
-        f:row({
-          f:static_text({
-            title = LOC("$$$/PhotoDeck/AccountDialog/Email=Email:"),
-            width = LrView.share("user_label_width"),
-            alignment = "right",
-          }),
-          f:edit_field({
-            value = LrView.bind("username"),
-            width = 300,
-          }),
-        }),
-        f:row({
-          f:static_text({
-            title = LOC("$$$/PhotoDeck/AccountDialog/Password=Password:"),
-            width = LrView.share("user_label_width"),
-            alignment = "right",
-          }),
-          f:password_field({
-            value = LrView.bind("password"),
-            width = 300,
-          }),
-        }),
+      spacing = f:control_spacing(),
+      f:push_button({
+        title = LOC("$$$/PhotoDeck/OAuth/ConnectAction=Connect / Reconnect"),
+        enabled = LrBinding.negativeOfKey("oauthBusy"),
+        action = function()
+          login(propertyTable, true)
+        end,
       }),
-
-      f:column({
-        f:push_button({
-          title = LOC("$$$/PhotoDeck/AccountDialog/LoginAction=Login"),
-          enabled = LrBinding.negativeOfKey("loggedin"),
-          action = function()
-            login(propertyTable)
-          end,
-        }),
+      f:push_button({
+        title = LOC("$$$/PhotoDeck/OAuth/DisconnectAction=Disconnect"),
+        visible = LrBinding.andAllKeys("loggedin"),
+        enabled = LrBinding.negativeOfKey("oauthBusy"),
+        action = function()
+          propertyTable.oauthBusy = true
+          LrTasks.startAsyncTask(function()
+            local _, message = PhotoDeckAPI.disconnect(propertyTable)
+            propertyTable.loggedin = false
+            propertyTable.connectionStatus = message or LOC("$$$/PhotoDeck/OAuth/Disconnected=Not connected to PhotoDeck")
+            propertyTable.oauthBusy = false
+          end)
+        end,
       }),
     }),
 
@@ -465,6 +466,7 @@ function PhotoDeckDialogs.sectionsForTopOfDialog(f, propertyTable)
       f:column({
         f:static_text({
           title = LrView.bind("connectionStatus"),
+          tooltip = LrView.bind("connectionStatus"),
           font = "<system/small/bold>",
           width = 300,
           height_in_lines = 2,
@@ -644,7 +646,7 @@ function PhotoDeckDialogs.sectionsForTopOfDialog(f, propertyTable)
   }
 
   local dialogs = {}
-  if not PhotoDeckAPI.hasDistributionKeys then
+  if not PhotoDeckAPI.hasDistributionClientId then
     table.insert(dialogs, apiCredentials)
   end
   table.insert(dialogs, userAccount)
@@ -714,7 +716,7 @@ PhotoDeckDialogs.viewForCollectionSettings = function(f, publishSettings, info)
   publishSettings.connectionStatus = LOC("$$$/PhotoDeck/CollectionSettingsDialog/ConnectionStatus/Connecting=Connecting to PhotoDeck^.")
 
   LrTasks.startAsyncTask(function()
-    PhotoDeckAPI.connect(publishSettings.apiKey, publishSettings.apiSecret, publishSettings.username, publishSettings.password)
+    PhotoDeckAPI.connect(publishSettings)
     local error_msg = nil
 
     if publishedCollection then

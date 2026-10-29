@@ -21,6 +21,14 @@ The mocked API uses `api.example.test`, independently of the plugin's configured
 host. Time advances through a fake clock, so retry and throttle tests do not wait
 in real time.
 
+OAuth tests mock the browser, PKCE and secure storage. They cover callback
+validation, bearer isolation, token rotation, `expires_in` renewal and concurrent
+refresh/throttling.
+
+OAuth diagnostics use the `OAuth:` prefix in `PhotoDeckPublishLightroomPlugin`
+and omit credentials, callback URLs and server error descriptions. Never replay
+codes or refresh tokens after an uncertain exchange.
+
 Localization checks compare the French and German dictionaries with the source
 keys, rejecting missing, stale, duplicate or malformed entries and mismatched
 placeholders and formatting markers.
@@ -34,8 +42,10 @@ cleanup outside native byte-getter callbacks, and multipart POST uploads through
 Mocked tests do not replace testing the native HTTP stack and catalog callbacks.
 Before releasing, use disposable resources and test accounts to verify:
 
-1. Login, wrong password, OTP, canceled OTP, expired session, logout and switching
-   between accounts/sites. Confirm all routing/session cookies are reused.
+1. Register the plugin's `lightroom://` callback and test browser authorization
+   (including two-factor sign-in), cancellation, reconnect, renewal and revocation.
+   Verify separate services, persistence after restarting Lightroom, native PKCE
+   helpers and secure storage with Unicode installation paths.
 2. Existing catalogs/presets: publish to multiple galleries, virtual copies,
    metadata-only republish, file replacement and recovery after remote deletion.
 3. JPEG, TIFF, DNG, original RAW and video uploads, MIME/filename corrections,

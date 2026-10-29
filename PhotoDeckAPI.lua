@@ -5,6 +5,7 @@ local LrPathUtils = import("LrPathUtils")
 local LrTasks = import("LrTasks")
 local PhotoDeckHttp = require("PhotoDeckHttp")
 local JSON = require("PhotoDeckJSON")
+local OAuth = require("PhotoDeckOAuth")
 
 local logger = import("LrLogger")("PhotoDeckPublishLightroomPlugin")
 logger:enable("logfile")
@@ -13,36 +14,38 @@ local log_trace = logger:quick("trace")
 local PhotoDeckAPI_BASEURL = "https://api.photodeck.com"
 local PhotoDeckMY_BASEURL = "https://my.photodeck.com"
 
-local PhotoDeckAPI_KEY = ""
-local PhotoDeckAPI_SECRET = ""
+local PhotoDeckOAUTH_CLIENT_ID = ""
 
 local PhotoDeckAPI = {
-  hasDistributionKeys = PhotoDeckAPI_KEY and PhotoDeckAPI_KEY ~= "",
-  key = "",
-  secret = "",
-  password = "",
+  hasDistributionClientId = PhotoDeckOAUTH_CLIENT_ID ~= "",
   loggedin = false,
-  otpEnabled = false,
-  otp = nil,
   canSynchronize = true,
 }
 
-local PhotoDeckAPICache = {
-  values = {},
-  pending = {},
-}
-local failedUploadLocations = {}
-local http = PhotoDeckHttp.new(PhotoDeckAPI, PhotoDeckAPI_BASEURL)
+local contexts = {}
+-- Lightroom publish jobs can run concurrently for different accounts. Keep
+-- their credentials, resource caches and failed storage locations task-local.
+local taskContexts = setmetatable({}, { __mode = "k" })
+local defaultContext = { cache = { values = {}, pending = {} }, failedUploadLocations = {} }
+local function currentContext()
+  return taskContexts[coroutine.running()] or defaultContext
+end
+local http = PhotoDeckHttp.new(function() return currentContext().connection end, PhotoDeckAPI_BASEURL)
 
 -- All calls must run in an LrTask. The third result carries status and Link headers.
-PhotoDeckAPI.request = http.request
+function PhotoDeckAPI.request(...)
+  local result, message, info = http.request(...)
+  PhotoDeckAPI.loggedin = PhotoDeckAPI.isConnected()
+  return result, message, info
+end
 
 local function invalidResponse()
   return LOC("$$$/PhotoDeck/API/InvalidResponse=Invalid response from PhotoDeck")
 end
 
 local function cached(key, load)
-  local cache = PhotoDeckAPICache
+  local context = currentContext()
+  local cache = context.cache
   if cache.values[key] then
     return cache.values[key]
   end
@@ -55,7 +58,14 @@ local function cached(key, load)
   end
   pending = { loading = true }
   cache.pending[key] = pending
-  local ok, result, errorMessage = LrTasks.pcall(load)
+  local ok, result, errorMessage = LrTasks.pcall(function()
+    -- LrTasks.pcall may use a child coroutine to allow protected yielding.
+    local task = coroutine.running()
+    if task then
+      taskContexts[task] = context
+    end
+    return load()
+  end)
   if not ok then
     result, errorMessage = nil, invalidResponse()
   end
@@ -68,7 +78,7 @@ local function cached(key, load)
 end
 
 local function requestObject(method, url, params, onerror)
-  local result, errorMessage, info = http.request(method, url, params, onerror)
+  local result, errorMessage, info = PhotoDeckAPI.request(method, url, params, onerror)
   if (result and not JSON.isObject(result)) or (info and info.status == 204) then
     return nil, invalidResponse(), info
   end
@@ -83,7 +93,7 @@ local function requestList(url, params, key, onerror, inclusion)
       return nil, invalidResponse()
     end
     visited[target] = true
-    local page, errorMessage, info = http.request("GET", url, params, onerror)
+    local page, errorMessage, info = PhotoDeckAPI.request("GET", url, params, onerror)
     if errorMessage or not page then
       return nil, errorMessage
     end
@@ -116,52 +126,70 @@ local function galleryURL(website, gallery)
   return website.home_url:gsub("/+$", "") .. "/-/" .. gallery.full_url_path:gsub("^/+", "")
 end
 
-function PhotoDeckAPI.connect(key, secret, username, password)
-  local changed = PhotoDeckAPI.username ~= username or PhotoDeckAPI.password ~= password
-  if changed then
-    if PhotoDeckAPI.loggedin then
-      PhotoDeckAPI.logout()
+function PhotoDeckAPI.connect(settings)
+  local clientId = PhotoDeckAPI.hasDistributionClientId and PhotoDeckOAUTH_CLIENT_ID or settings.oauthClientId
+  local selected = OAuth.connection(clientId, settings.oauthConnectionId, PhotoDeckMY_BASEURL, PhotoDeckAPI_BASEURL)
+  local context = selected and contexts[selected]
+  if not context then
+    context = { connection = selected, cache = { values = {}, pending = {} }, failedUploadLocations = {} }
+    if selected then
+      contexts[selected] = context
     end
-    http.reset()
-    PhotoDeckAPICache = { values = {}, pending = {} }
-    PhotoDeckAPI.loggedin, PhotoDeckAPI.otpEnabled, PhotoDeckAPI.otp = false, false, nil
-    failedUploadLocations = {}
   end
-  if PhotoDeckAPI.hasDistributionKeys then
-    -- use builtin keys
-    PhotoDeckAPI.key = PhotoDeckAPI_KEY
-    PhotoDeckAPI.secret = PhotoDeckAPI_SECRET
+  local task = coroutine.running()
+  if task then
+    taskContexts[task] = context
   else
-    -- use the one supplied by the user
-    PhotoDeckAPI.key = key
-    PhotoDeckAPI.secret = secret
+    defaultContext = context
   end
-
-  PhotoDeckAPI.username = username
-  PhotoDeckAPI.password = password
+  PhotoDeckAPI.loggedin = PhotoDeckAPI.isConnected()
+  return selected
 end
 
-function PhotoDeckAPI.ping()
-  log_trace("PhotoDeckAPI.ping()")
-  local result, error_msg = requestObject("GET", "/ping.json")
-  return result and result.notice, error_msg
+function PhotoDeckAPI.isConnected()
+  local selected = currentContext().connection
+  return selected and selected.isConnected() or false
 end
 
-function PhotoDeckAPI.logout()
-  log_trace("PhotoDeckAPI.logout()")
-  local response, error_msg = PhotoDeckAPI.request("GET", "/logout.json")
+function PhotoDeckAPI.authorize(settings, cancel)
+  if not PhotoDeckAPI.hasDistributionClientId and (not settings.oauthClientId or settings.oauthClientId == "") then
+    return nil, LOC("$$$/PhotoDeck/OAuth/ClientIdRequired=Configure the PhotoDeck OAuth client ID first")
+  end
+  if not settings.oauthConnectionId or settings.oauthConnectionId == "" then
+    local data, message = require("PhotoDeckPKCE").generate()
+    if not data then
+      return nil, message
+    end
+    settings.oauthConnectionId = data.state
+  end
+  local selected = PhotoDeckAPI.connect(settings)
+  if not selected then
+    return nil, LOC("$$$/PhotoDeck/OAuth/ClientIdRequired=Configure the PhotoDeck OAuth client ID first")
+  end
+  local result, message = selected.authorize(cancel)
+  contexts[selected].cache = { values = {}, pending = {} }
+  PhotoDeckAPI.loggedin = selected.isConnected()
+  return result, message
+end
+
+function PhotoDeckAPI.disconnect(settings)
+  local selected = PhotoDeckAPI.connect(settings)
+  local result, error_msg = true, nil
+  if selected then
+    result, error_msg = selected.disconnect()
+  end
   PhotoDeckAPI.loggedin = false
-  PhotoDeckAPI.otpEnabled, PhotoDeckAPI.otp = false, nil
-  http.reset()
-  PhotoDeckAPICache = { values = {}, pending = {} }
-  return response, error_msg
+  currentContext().cache = { values = {}, pending = {} }
+  return result, error_msg
 end
 
 function PhotoDeckAPI.whoami()
   log_trace("PhotoDeckAPI.whoami()")
   local result, error_msg = requestObject("GET", "/whoami.json")
-  if not result or not result.email or result.email == "" then
+  if not result then
     PhotoDeckAPI.loggedin = false
+  elseif type(result.email) ~= "string" or result.email == "" then
+    return nil, invalidResponse()
   end
   return result, error_msg
 end
@@ -178,7 +206,7 @@ function PhotoDeckAPI.websites()
 end
 
 function PhotoDeckAPI.website(urlname, details)
-  if details or PhotoDeckAPICache.values["website/" .. urlname] then
+  if details or currentContext().cache.values["website/" .. urlname] then
     return cached("website/" .. urlname, function()
       local result, message = requestObject("GET", "/websites/" .. PhotoDeckHttp.encode(urlname) .. ".json")
       if result and (type(result.uuid) ~= "string" or type(result.home_url) ~= "string") then
@@ -1029,6 +1057,7 @@ local function buildMediaMetadataParams(photo, updating)
 end
 
 local function buildMediaUploadParams(contentPath, mime_type, file_size)
+  local failedUploadLocations = currentContext().failedUploadLocations
   local params = {
     upload_location = "REQUEST",
     file_name = LrPathUtils.leafName(contentPath),
@@ -1047,6 +1076,7 @@ function PhotoDeckAPI.uploadPhoto(urlname, attributes)
 end
 
 function PhotoDeckAPI.updatePhoto(photoId, urlname, attributes, handleNotFound)
+  local failedUploadLocations = currentContext().failedUploadLocations
   local onerror = {}
   if handleNotFound then
     onerror["404"] = function()

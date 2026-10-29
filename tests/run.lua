@@ -5,6 +5,7 @@ package.path = "./?.lua;" .. package.path
 local tests, env = {}, nil
 local realIO = io
 local apiOrigin = "https://api.example.test"
+local oauthOrigin = "https://my.example.test"
 local currentSection
 
 local function section(name)
@@ -94,9 +95,22 @@ end
 
 -- Lightroom mocks; every test starts with isolated modules, HTTP and clock state.
 
+local function apiWithClientId(clientId)
+  local file = assert(realIO.open("PhotoDeckAPI.lua", "rb"))
+  local source = file:read("*a")
+  file:close()
+  local replacements
+  source, replacements = source:gsub('local PhotoDeckOAUTH_CLIENT_ID = [^\r\n]*', function()
+    return 'local PhotoDeckOAUTH_CLIENT_ID = ' .. string.format('%q', clientId)
+  end, 1)
+  equal(replacements, 1)
+  return assert(loadstring(source, "@PhotoDeckAPI.lua"))()
+end
+
 local function reset()
   _G.io = realIO
-  env = { responses = {}, calls = {}, signatures = {}, logs = {}, now = 0, otpCodes = {} }
+  _G.WIN_ENV = false
+  env = { responses = {}, calls = {}, logs = {}, now = 0, vault = {}, writes = {}, randomCount = 0, viewTypes = {} }
   local function send(method, url, body, headers, totalSize, transport)
     local chunks = {}
     if type(body) == "function" then
@@ -139,12 +153,13 @@ local function reset()
   end
   local factory = setmetatable({}, {
     __index = function(_, key)
-      if key == "dialog_spacing" then
+      if key == "dialog_spacing" or key == "control_spacing" then
         return function()
           return 1
         end
       end
       return function(_, value)
+        if type(value) == "table" then env.viewTypes[value] = key end
         return value
       end
     end,
@@ -165,12 +180,6 @@ local function reset()
         return time + os.difftime(time, os.time(utc)) - 978307200
       end,
     },
-    LrDigest = { SHA1 = {
-      digest = function(value)
-        env.signatures[#env.signatures + 1] = value
-        return "ABCDEF"
-      end,
-    } },
     LrHttp = {
       get = function(url, headers)
         return send("GET", url, nil, headers)
@@ -201,6 +210,7 @@ local function reset()
       end,
       openUrlInBrowser = function(url)
         env.browserURL = url
+        if env.onBrowserURL then env.onBrowserURL(url) end
       end,
     },
     LrFileUtils = {
@@ -220,9 +230,27 @@ local function reset()
         return path:match("[^/]+$")
       end,
     },
+    LrPasswords = {
+      retrieve = function(key)
+        if env.storageReadError then error("secret storage error") end
+        return env.vault[key]
+      end,
+      store = function(key, value)
+        if env.storageWriteError then error("secret storage error") end
+        env.vault[key] = value
+        env.writes[#env.writes + 1] = { key = key, value = value }
+      end,
+    },
     LrStringUtils = {
       encodeBase64 = function(value)
         return "base64(" .. value .. ")"
+      end,
+      truncate = function(value, maxBytes)
+        local size = math.min(#value, maxBytes)
+        while size > 0 and value:byte(size + 1) and value:byte(size + 1) >= 128 and value:byte(size + 1) < 192 do
+          size = size - 1
+        end
+        return value:sub(1, size)
       end,
     },
     LrTasks = {
@@ -245,14 +273,7 @@ local function reset()
         return value
       end,
     },
-    LrDialogs = {
-      presentModalDialog = function(dialog)
-        env.otpPrompts = (env.otpPrompts or 0) + 1
-        local code = table.remove(env.otpCodes, 1)
-        dialog.contents.bind_to_object.otp = code
-        return code and "ok" or "cancel"
-      end,
-    },
+    LrDialogs = { presentModalDialog = function() return "cancel" end },
     LrLogger = function()
       return {
         enable = function() end,
@@ -271,8 +292,20 @@ local function reset()
       keyIsNotNil = function(value)
         return value
       end,
+      negativeOfKey = function(value) return value end,
+      andAllKeys = function(...) return { ... } end,
+      makePropertyTable = function() return {} end,
     },
-    LrProgressScope = {},
+    LrFunctionContext = {
+      callWithContext = function(_, action) return action({}) end,
+    },
+    LrProgressScope = function()
+      return {
+        setCancelable = function() end,
+        isCanceled = function() return false end,
+        done = function() end,
+      }
+    end,
     LrApplication = {
       activeCatalog = function()
         return env.catalog
@@ -294,8 +327,8 @@ local function reset()
       return tostring(args[tonumber(index)])
     end))
   end
-  _G._PLUGIN = {}
-  for _, name in ipairs({ "PhotoDeckAPI", "PhotoDeckHttp", "PhotoDeckJSON", "PhotoDeckDialogs", "PhotoDeckPublishServiceProvider" }) do
+  _G._PLUGIN = { id = dofile("Info.lua").LrToolkitIdentifier }
+  for _, name in ipairs({ "PhotoDeckAPI", "PhotoDeckHttp", "PhotoDeckJSON", "PhotoDeckOAuth", "PhotoDeckPKCE", "PhotoDeckDialogs", "PhotoDeckPublishServiceProvider" }) do
     package.loaded[name] = nil
   end
   -- API-level and direct HTTP-client tests use the same fake origin.
@@ -304,14 +337,52 @@ local function reset()
   transport.new = function(state)
     return newClient(state, apiOrigin)
   end
-  env.api = require("PhotoDeckAPI")
+  local json = require("PhotoDeckJSON")
+  local oauth = require("PhotoDeckOAuth")
+  local newConnection = oauth.connection
+  oauth.connection = function(clientId, id)
+    return newConnection(clientId, id, oauthOrigin, apiOrigin)
+  end
+  env.credentialKey = "oauth2:" .. json.encode({ oauthOrigin, apiOrigin, "test-client", "test-connection" })
+  env.vault[env.credentialKey] = json.encode({ access_token = "test-access", refresh_token = "test-refresh", expires_at = 86400 })
+  env.realPKCE = require("PhotoDeckPKCE").generate
+  require("PhotoDeckPKCE").generate = function()
+    env.randomCount = env.randomCount + 1
+    return {
+      verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+      challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+      state = string.rep("s", 40) .. string.format("%03d", env.randomCount),
+    }
+  end
+  -- Most fixtures exercise user-configured IDs, regardless of the build's ID.
+  env.api = apiWithClientId("")
+  package.loaded.PhotoDeckAPI = env.api
   transport.new = newClient
-  env.api.connect("test-key", "test-secret", "user@example.com", "test-password")
+  env.settings = { oauthClientId = "test-client", oauthConnectionId = "test-connection" }
+  env.auth = env.api.connect(env.settings)
 end
 
 local function httpClient()
-  local state = { key = "test-key", secret = "test-secret", username = "user@example.com", password = "test-password", loggedin = false }
-  return require("PhotoDeckHttp").new(state, apiOrigin), state
+  return require("PhotoDeckHttp").new(env.auth, apiOrigin), env.auth
+end
+
+local function tokenResponse(access, refresh, expiry)
+  return response(200, require("PhotoDeckJSON").encode({ access_token = access or "new-access", refresh_token = refresh or "new-refresh", expires_in = expiry or 86400, token_type = "Bearer", scope = "api" }))
+end
+
+local function formParams(text)
+  local value = {}
+  local function decode(item)
+    return (item:gsub("+", " "):gsub("%%(%x%x)", function(hex) return string.char(tonumber(hex, 16)) end))
+  end
+  for key, item in text:gmatch("([^&=]+)=([^&]*)") do value[decode(key)] = decode(item) end
+  return value
+end
+
+local function callback(params, overrides)
+  local values = { state = params.state, iss = oauthOrigin, code = "authorization-code" }
+  for key, value in pairs(overrides or {}) do values[key] = value end
+  return require("PhotoDeckOAuth").redirectURI .. "?" .. require("PhotoDeckHttp").formEncode(values)
 end
 
 local function cooperativeTasks()
@@ -447,16 +518,18 @@ test("JSON encoding rejects non-finite numbers, unsupported values and invalid t
   end
 end)
 
-section("Request signing and encoding")
+section("Bearer authentication and request encoding")
 
-test("signing uses exact encoded path/query, SHA1, English RFC2822 and trailing newline", function()
+test("bearer requests preserve encoded path/query without legacy signatures", function()
   local client = httpClient()
   enqueue(response(200, "{}"), response(200, "{}"))
   assert(client.request("GET", "/medias.json?filter%5Bsearch%5D=%2b+c%2Fz&per_page=2"))
-  equal(env.signatures[1], "GET\n/medias.json\nfilter%5Bsearch%5D=%2b+c%2Fz&per_page=2\ntest-secret\nMon, 01 Jan 2001 00:00:00 GMT\n")
-  equal(header(env.calls[1], "X-PhotoDeck-Authorization"), "test-key:abcdef")
+  equal(env.calls[1].url, apiOrigin .. "/medias.json?filter%5Bsearch%5D=%2b+c%2Fz&per_page=2")
+  equal(header(env.calls[1], "Authorization"), "Bearer test-access")
+  equal(header(env.calls[1], "X-PhotoDeck-Authorization"), nil)
+  equal(header(env.calls[1], "X-PhotoDeck-Timestamp"), nil)
   assert(client.request("PUT", "/medias/m.json?include=gallery_uuids", { media = { title = "Café + &" } }))
-  contains(env.signatures[2], "PUT\n/medias/m.json\ninclude=gallery_uuids\n")
+  equal(header(env.calls[2], "Authorization"), "Bearer test-access")
   equal(env.calls[2].body, '{"media":{"title":"Café + &"}}')
   equal(payload(env.calls[2]).media.title, "Café + &")
 end)
@@ -499,10 +572,10 @@ test("POST, PUT, PATCH and DELETE send nested JSON with native types", function(
   end
 end)
 
-section("Authentication and sessions")
+section("OAuth authorization and secure credentials")
 
-test("login retains all cookies without decoding their values", function()
-  local client, state = httpClient()
+test("every API request uses bearer authentication and ignores session cookies", function()
+  local client = httpClient()
   enqueue(
     response(200, '{"email":"user@example.com"}', {
       { field = "Set-Cookie", value = "_ficelle_session=a%2Bb; Path=/; Secure; HttpOnly" },
@@ -511,104 +584,740 @@ test("login retains all cookies without decoding their values", function()
     response(200, "[]")
   )
   assert(client.request("GET", "/whoami.json"))
-  assert(state.loggedin)
   assert(client.request("GET", "/artists.json"))
-  equal(header(env.calls[1], "Authorization"), "Basic base64(user@example.com:test-password)")
-  equal(header(env.calls[2], "Authorization"), nil)
-  contains(header(env.calls[2], "Cookie"), "_ficelle_session=a%2Bb")
-  contains(header(env.calls[2], "Cookie"), "routing=shard-2")
-  equal(#env.signatures, 2)
+  equal(header(env.calls[1], "Authorization"), "Bearer test-access")
+  equal(header(env.calls[2], "Authorization"), "Bearer test-access")
+  equal(header(env.calls[2], "Cookie"), "")
 end)
 
-test("ping neither sends user credentials nor establishes a user session", function()
-  enqueue(response(200, '{"notice":"OK"}'))
-  equal(env.api.ping(), "OK")
+test("connection checks use the bearer-authenticated user profile", function()
+  enqueue(response(200, '{"email":"user@example.com","firstname":"Test","lastname":"User"}'))
+  equal(assert(env.api.whoami()).email, "user@example.com")
   equal(env.calls[1].method, "GET")
-  assert(env.calls[1].url:match("/ping%.json$"))
-  contains(env.signatures[1], "GET\n/ping.json\n\n")
-  equal(env.api.loggedin, false)
-  equal(header(env.calls[1], "Authorization"), nil)
+  equal(env.calls[1].url, apiOrigin .. "/whoami.json")
+  equal(env.api.loggedin, true)
+  equal(header(env.calls[1], "Authorization"), "Bearer test-access")
 end)
 
-test("OTP hint prompts once, appends code once and uses session afterwards", function()
-  env.otpCodes = { "123456" }
-  enqueue(response(401, '{"error":"Code required","auth_method":"basic:password+otp"}'), response(200, '{"email":"user@example.com"}'), response(200, "[]"))
-  assert(env.api.whoami())
-  equal(env.otpPrompts, 1)
-  equal(header(env.calls[2], "Authorization"), "Basic base64(user@example.com:test-password+123456)")
-  assert(env.api.galleries("site"))
-  equal(header(env.calls[3], "Authorization"), nil)
-  equal(env.api.otp, nil)
+test("browser authorization uses S256, state, issuer validation and form-encoded code exchange", function()
+  local oauth = require("PhotoDeckOAuth")
+  local selected = { oauthClientId = "test-client", oauthConnectionId = "fresh" }
+  env.onBrowserURL = function(url)
+    equal(url:match("^[^?]+"), oauthOrigin .. "/oauth/authorize")
+    local params = formParams(url:match("%?(.*)"))
+    equal(params.response_type, "code")
+    equal(params.client_id, "test-client")
+    equal(params.redirect_uri, oauth.redirectURI)
+    equal(params.scope, "api")
+    equal(params.resource, apiOrigin)
+    equal(params.code_challenge_method, "S256")
+    equal(params.code_challenge, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM")
+    absent(url, "code_verifier")
+    assert(not oauth.receiveCallback(callback(params, { state = "wrong" })))
+    assert(not oauth.receiveCallback(callback(params, { iss = "https://evil.example" })))
+    assert(not oauth.receiveCallback(callback(params) .. "&code=duplicate"))
+    assert(not oauth.receiveCallback(callback(params) .. "#fragment"))
+    assert(not oauth.receiveCallback(callback(params, { code = "%invalid" }):gsub("%%25invalid", "%%invalid")))
+    env.callbackURL = callback(params, { code = "code+with/&=chars" })
+    assert(oauth.receiveCallback('"' .. env.callbackURL .. '"'))
+    assert(not oauth.receiveCallback(env.callbackURL))
+  end
+  enqueue(tokenResponse())
+  assert(env.api.authorize(selected))
+  equal(#env.calls, 1)
+  local request = env.calls[1]
+  equal(request.url, oauthOrigin .. "/oauth/token")
+  equal(header(request, "Content-Type"), "application/x-www-form-urlencoded")
+  equal(header(request, "Authorization"), nil)
+  equal(header(request, "Cookie"), "")
+  local params = formParams(request.body)
+  equal(params.grant_type, "authorization_code")
+  equal(params.code, "code+with/&=chars")
+  equal(params.redirect_uri, oauth.redirectURI)
+  equal(params.code_verifier, "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk")
+  equal(params.resource, apiOrigin)
+  equal(params.client_secret, nil)
+  local saved = require("PhotoDeckJSON").decode(env.writes[#env.writes].value)
+  equal(saved.access_token, "new-access")
+  equal(saved.refresh_token, "new-refresh")
+  equal(saved.expires_at, 86400)
+  assert(not oauth.receiveCallback(env.callbackURL))
+  for key in pairs(selected) do assert(not key:find("token")) end
+  local logs = table.concat(env.logs, "\n")
+  contains(logs, "OAuth: callback accepted; result=code")
+  contains(logs, "OAuth: callback ignored; reason=issuerMismatch")
+  contains(logs, "OAuth: <- authorization_code HTTP 200; response=object")
+  contains(logs, "OAuth: replacement token pair saved")
+  absent(logs, params.code)
+  absent(logs, params.code_verifier)
+  absent(logs, env.callbackURL)
+  absent(logs, "new-access")
+  absent(logs, "new-refresh")
 end)
 
-test("invalid password and canceled OTP do not loop", function()
-  enqueue(response(401, '{"error":"Incorrect password"}'))
-  local value, message = env.api.whoami()
-  equal(value, nil)
-  equal(message, "Incorrect password")
-  equal(env.otpPrompts, nil)
-  enqueue(response(401, '{"error":"Code required","auth_method":"basic:password+otp"}'))
-  value, message = env.api.whoami()
-  equal(value, nil)
-  equal(env.otpPrompts, 1)
-  equal(#env.calls, 2)
+test("authorization errors show the server's consent explanation without exchanging a code", function()
+  local oauth = require("PhotoDeckOAuth")
+  env.onBrowserURL = function(url)
+    local params = formParams(url:match("%?(.*)"))
+    assert(oauth.receiveCallback(oauth.redirectURI .. "?" .. require("PhotoDeckHttp").formEncode({
+      state = params.state, iss = oauthOrigin, error = "invalid_request", error_description = "Choose whether to allow access.",
+    })))
+  end
+  local success, message = env.api.authorize({ oauthClientId = "test-client", oauthConnectionId = "fresh" })
+  equal(success, nil)
+  equal(message, "PhotoDeck authorization failed: invalid_request: Choose whether to allow access.")
+  equal(#env.calls, 0)
+  local logs = table.concat(env.logs, "\n")
+  contains(logs, "OAuth: authorization callback rejected; error=invalid_request")
+  absent(logs, "Choose whether to allow access.")
 end)
 
-test("expired sessions reauthenticate and retry the original request", function()
-  local client, state = httpClient()
-  state.loggedin = true
-  enqueue(response(401, '{"error":"Session expired"}'), response(200, "[]"))
+test("displayed OAuth descriptions redact private attempt values and bound UTF8 text", function()
+  local oauth = require("PhotoDeckOAuth")
+  local state
+  local verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+  env.onBrowserURL = function(url)
+    state = formParams(url:match("%?(.*)")).state
+    assert(oauth.receiveCallback(oauth.redirectURI .. "?" .. require("PhotoDeckHttp").formEncode({
+      state = state, iss = oauthOrigin, error = "invalid_request",
+      error_description = "Private " .. state .. " " .. verifier .. " " .. string.rep("é", 600),
+    })))
+  end
+  local success, message = env.api.authorize({ oauthClientId = "test-client", oauthConnectionId = "fresh" })
+  equal(success, nil)
+  contains(message, "Private [redacted] [redacted]")
+  assert(#message < 600)
+  equal(message:sub(-2), "é")
+  absent(message, state)
+  absent(message, verifier)
+  local logs = table.concat(env.logs, "\n")
+  absent(logs, state)
+  absent(logs, verifier)
+  absent(logs, "Private")
+end)
+
+test("authorization errors without a description still identify the OAuth error", function()
+  local oauth = require("PhotoDeckOAuth")
+  env.onBrowserURL = function(url)
+    assert(oauth.receiveCallback(oauth.redirectURI .. "?" .. require("PhotoDeckHttp").formEncode({
+      state = formParams(url:match("%?(.*)")).state, iss = oauthOrigin, error = "invalid_request",
+    })))
+  end
+  local success, message = env.api.authorize({ oauthClientId = "test-client", oauthConnectionId = "fresh" })
+  equal(success, nil)
+  equal(message, "PhotoDeck authorization failed: invalid_request")
+  equal(#env.calls, 0)
+end)
+
+test("rejected code exchanges show HTTP/OAuth errors and log only safe diagnostics", function()
+  env.onBrowserURL = function(url)
+    local params = formParams(url:match("%?(.*)"))
+    env.callbackURL = callback(params)
+    assert(require("PhotoDeckOAuth").receiveCallback(env.callbackURL))
+  end
+  enqueue(response(400, '{"error":"invalid_grant","error_description":"private-description authorization-code private-token"}', {
+    { field = "X-Request-ID", value = "123e4567-e89b-12d3-a456-426614174000" },
+  }))
+  local success, message = env.api.authorize({ oauthClientId = "test-client", oauthConnectionId = "fresh" })
+  equal(success, nil)
+  contains(message, "HTTP error 400")
+  contains(message, "invalid_grant")
+  contains(message, "reconnect")
+  equal(#env.calls, 1)
+  local logs = table.concat(env.logs, "\n")
+  contains(logs, "OAuth: <- authorization_code HTTP 400; response=object; error=invalid_grant")
+  contains(logs, "request_id=123e4567-e89b-12d3-a456-426614174000")
+  contains(logs, "OAuth: token response rejected; reason=httpStatus")
+  for _, value in ipairs({ "private-description", "authorization-code", "private-token", env.callbackURL,
+    "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk" }) do
+    absent(logs, value)
+    absent(message, value)
+  end
+end)
+
+test("OAuth response parsing accepts native status headers and JSON media subtypes", function()
+  env.onBrowserURL = function(url)
+    assert(require("PhotoDeckOAuth").receiveCallback(callback(formParams(url:match("%?(.*)")))))
+  end
+  local item = tokenResponse()
+  item.status = 0
+  item.headers = { { field = "Status", value = "200 OK" } }
+  item.contentType = "Application/Token+JSON; charset=UTF-8"
+  enqueue(item)
+  assert(env.api.authorize({ oauthClientId = "test-client", oauthConnectionId = "fresh" }))
+  contains(table.concat(env.logs, "\n"), "OAuth: <- authorization_code HTTP 200; response=object")
+end)
+
+test("malformed token responses identify the failed field without exposing returned tokens", function()
+  env.onBrowserURL = function(url)
+    assert(require("PhotoDeckOAuth").receiveCallback(callback(formParams(url:match("%?(.*)")))))
+  end
+  local item = tokenResponse("private-access", "private-refresh")
+  item.body = item.body:gsub('"expires_in":86400', '"expires_in":"86400"')
+  enqueue(item)
+  local success, message = env.api.authorize({ oauthClientId = "test-client", oauthConnectionId = "fresh" })
+  equal(success, nil)
+  contains(message, "Invalid response")
+  local logs = table.concat(env.logs, "\n")
+  contains(logs, "OAuth: token response rejected; reason=expiresIn")
+  absent(logs, "private-access")
+  absent(logs, "private-refresh")
+end)
+
+test("OAuth SDK exceptions retain a source/category without logging exception contents", function()
+  env.onBrowserURL = function(url)
+    assert(require("PhotoDeckOAuth").receiveCallback(callback(formParams(url:match("%?(.*)")))))
+  end
+  env.modules.LrHttp.post = function()
+    error("PhotoDeckOAuth.lua:28: bad argument private-token authorization-code", 0)
+  end
+  local success, message = env.api.authorize({ oauthClientId = "test-client", oauthConnectionId = "fresh" })
+  equal(success, nil)
+  contains(message, "No response from network")
+  local logs = table.concat(env.logs, "\n")
+  contains(logs, "OAuth: authorization_code failed; exception=invalidArgument; source=PhotoDeckOAuth.lua:28")
+  absent(logs, "private-token")
+  absent(logs, "authorization-code")
+end)
+
+test("OAuth network failures report safe SDK codes without replaying the code exchange", function()
+  env.onBrowserURL = function(url)
+    assert(require("PhotoDeckOAuth").receiveCallback(callback(formParams(url:match("%?(.*)")))))
+  end
+  local item = response(0, nil)
+  item.error = { errorCode = "timedOut", nativeCode = -1001, name = "private-code private-token" }
+  enqueue(item)
+  local success, message = env.api.authorize({ oauthClientId = "test-client", oauthConnectionId = "fresh" })
+  equal(success, nil)
+  contains(message, "No response from network")
+  equal(#env.calls, 1)
+  local logs = table.concat(env.logs, "\n")
+  contains(logs, "network=timedOut; native=-1001")
+  absent(logs, "private-code")
+  absent(logs, "private-token")
+end)
+
+test("unrecognized OAuth errors and arbitrary request IDs cannot leak response secrets", function()
+  env.onBrowserURL = function(url)
+    assert(require("PhotoDeckOAuth").receiveCallback(callback(formParams(url:match("%?(.*)")))))
+  end
+  enqueue(response(400, '{"error":"private-error-value","error_description":"private-description"}', {
+    { field = "X-Request-ID", value = "private-header-value" },
+  }))
+  local success, message = env.api.authorize({ oauthClientId = "test-client", oauthConnectionId = "fresh" })
+  equal(success, nil)
+  local logs = table.concat(env.logs, "\n")
+  contains(logs, "error=unknown")
+  contains(logs, "request_id=unavailable")
+  for _, secret in ipairs({ "private-error-value", "private-description", "private-header-value" }) do
+    absent(logs, secret)
+    absent(message, secret)
+  end
+end)
+
+test("API requests without a connection context report reconnect rather than raising", function()
+  env.api.connect({})
+  local result, message = env.api.whoami()
+  equal(result, nil)
+  contains(message, "reconnect")
+  equal(#env.calls, 0)
+  contains(table.concat(env.logs, "\n"), "OAuth: API request blocked; no connection context")
+end)
+
+test("denied authorization, cancellation and timeout never exchange a code", function()
+  local oauth = require("PhotoDeckOAuth")
+  local selected = { oauthClientId = "test-client", oauthConnectionId = "fresh" }
+  env.onBrowserURL = function(url)
+    local params = formParams(url:match("%?(.*)"))
+    local denied = { state = params.state, iss = oauthOrigin, error = "access_denied" }
+    assert(oauth.receiveCallback(oauth.redirectURI .. "?" .. require("PhotoDeckHttp").formEncode(denied)))
+  end
+  local result, message = env.api.authorize(selected)
+  equal(result, nil)
+  contains(message, "canceled")
+  env.onBrowserURL = nil
+  result, message = env.api.authorize(selected, function() return true end)
+  equal(result, nil)
+  contains(message, "canceled")
+  env.onBrowserURL = function() env.now = env.now + 301 end
+  result, message = env.api.authorize(selected)
+  equal(result, nil)
+  contains(message, "timed out")
+  equal(#env.calls, 0)
+end)
+
+test("401 refreshes both tokens once and retries the original request", function()
+  local client = httpClient()
+  enqueue(response(401, '{"error":"Expired"}'), tokenResponse(), response(200, "[]"))
   assert(client.request("GET", "/artists.json"))
-  equal(#env.calls, 2)
-  equal(header(env.calls[1], "Authorization"), nil)
-  equal(header(env.calls[2], "Authorization"), "Basic base64(user@example.com:test-password)")
+  equal(#env.calls, 3)
+  equal(header(env.calls[1], "Authorization"), "Bearer test-access")
+  equal(header(env.calls[3], "Authorization"), "Bearer new-access")
+  local params = formParams(env.calls[2].body)
+  equal(params.grant_type, "refresh_token")
+  equal(params.refresh_token, "test-refresh")
+  equal(params.client_id, "test-client")
+  local json = require("PhotoDeckJSON")
+  equal(json.decode(env.writes[1].value).reconnect_required, true)
+  local pair = json.decode(env.vault[env.credentialKey])
+  equal(pair.access_token, "new-access")
+  equal(pair.refresh_token, "new-refresh")
 end)
 
-test("204 deletion/logout need no JSON and clear the session", function()
-  enqueue(response(204, nil, {}, "text/plain"), response(204, "", {}, "text/plain"))
+test("204 deletion needs no JSON and disconnect revokes and clears secure credentials", function()
+  enqueue(response(204, nil, {}, "text/plain"), response(200, "", {}, "text/plain"))
   local _, message = env.api.deletePhoto("m")
   equal(message, nil)
-  _, message = env.api.logout()
+  _, message = env.api.disconnect(env.settings)
   equal(message, nil)
   equal(env.api.loggedin, false)
   equal(#env.calls, 2)
+  equal(env.calls[2].url, oauthOrigin .. "/oauth/revoke")
+  equal(formParams(env.calls[2].body).token, "test-refresh")
+  equal(env.vault[env.credentialKey], "{}")
+  local result = env.api.whoami()
+  equal(result, nil)
+  equal(#env.calls, 2)
 end)
 
-test("cookies respect path boundaries, expiration and explicit reset", function()
-  local client = httpClient()
-  enqueue(
-    response(200, "{}", {
-      { field = "Set-Cookie", value = "scoped=yes; Path=/medias" },
-      { field = "Set-Cookie", value = "deleted=value; Path=/; Max-Age=0" },
-      { field = "Set-Cookie", value = "foreign=value; Domain=evil.example; Path=/" },
-    }),
-    response(200, "{}"),
-    response(200, "{}"),
-    response(200, "{}")
-  )
-  assert(client.request("GET", "/whoami.json"))
-  assert(client.request("GET", "/medias/m.json"))
-  equal(header(env.calls[2], "Cookie"), "scoped=yes")
-  assert(client.request("GET", "/medias_other.json"))
-  equal(header(env.calls[3], "Cookie"), "")
-  client.reset()
-  assert(client.request("GET", "/medias/m.json"))
-  equal(header(env.calls[4], "Cookie"), "")
-end)
-
-test("account switching clears cached resources and credentials", function()
-  enqueue(response(200, '[{"uuid":"old-style","name":"Old"}]'), response(204, ""), response(200, '[{"uuid":"new-style","name":"New"}]'))
-  assert(env.api.galleryDisplayStyles("site"))
-  env.api.connect("test-key", "test-secret", "other@example.com", "other-password")
-  equal(assert(env.api.galleryDisplayStyles("site"))["old-style"], nil)
-  equal(header(env.calls[3], "Cookie"), "")
-  equal(header(env.calls[3], "Authorization"), "Basic base64(other@example.com:other-password)")
+test("a rejected replacement access token does not refresh in a loop", function()
+  enqueue(response(401, "", {}, "text/html"), tokenResponse(), response(401, "", {}, "text/html"))
+  local result, message = env.api.whoami()
+  equal(result, nil)
+  contains(message, "reconnect")
   equal(#env.calls, 3)
+  equal(env.auth.isConnected(), false)
+end)
+
+test("connection switching isolates credentials and caches without revoking another service", function()
+  local json = require("PhotoDeckJSON")
+  local key = "oauth2:" .. json.encode({ oauthOrigin, apiOrigin, "test-client", "other-connection" })
+  env.vault[key] = json.encode({ access_token = "other-access", refresh_token = "other-refresh", expires_at = 86400 })
+  enqueue(response(200, '[{"uuid":"old-style","name":"Old"}]'), response(200, '[{"uuid":"new-style","name":"New"}]'))
+  assert(env.api.galleryDisplayStyles("site"))
+  env.api.connect({ oauthClientId = "test-client", oauthConnectionId = "other-connection" })
+  equal(assert(env.api.galleryDisplayStyles("site"))["old-style"], nil)
+  equal(header(env.calls[2], "Cookie"), "")
+  equal(header(env.calls[2], "Authorization"), "Bearer other-access")
+  equal(#env.calls, 2)
+  equal(env.auth.getAccessToken(), "test-access")
+end)
+
+test("expired credentials refresh proactively and restore both replacement tokens after restart", function()
+  env.now = 86401
+  enqueue(tokenResponse())
+  equal(env.auth.getAccessToken(), "new-access")
+  equal(#env.calls, 1)
+  package.loaded.PhotoDeckOAuth = nil
+  local restored = require("PhotoDeckOAuth").connection("test-client", "test-connection", oauthOrigin, apiOrigin)
+  equal(restored.getAccessToken(), "new-access")
+  env.now = env.now + 86401
+  enqueue(tokenResponse("next-access", "next-refresh"))
+  equal(restored.getAccessToken(), "next-access")
+  equal(formParams(env.calls[2].body).refresh_token, "new-refresh")
+  equal(require("PhotoDeckJSON").decode(env.vault[env.credentialKey]).refresh_token, "next-refresh")
+end)
+
+for _, lifetime in ipairs({ 300, 600, 3600, 86400, 172800 }) do
+  test("expires_in=" .. lifetime .. " controls expiry and proportional refresh timing", function()
+    env.now = 86401
+    enqueue(tokenResponse("short-access", "short-refresh", lifetime))
+    equal(env.auth.getAccessToken(), "short-access")
+    local record = require("PhotoDeckJSON").decode(env.vault[env.credentialKey])
+    near(record.expires_at, env.now + lifetime)
+    near(record.refresh_at, env.now + lifetime - math.min(60, lifetime * 0.1))
+    equal(env.auth.getAccessToken(), "short-access")
+    env.now = record.refresh_at - lifetime * 0.001
+    equal(env.auth.getAccessToken(), "short-access")
+    equal(#env.calls, 1)
+    env.now = record.refresh_at
+    enqueue(tokenResponse("long-access", "long-refresh", lifetime * 2))
+    equal(env.auth.getAccessToken(), "long-access")
+    record = require("PhotoDeckJSON").decode(env.vault[env.credentialKey])
+    near(record.expires_at, env.now + lifetime * 2)
+    equal(#env.calls, 2)
+  end)
+end
+
+for _, case in ipairs({
+  { name = "missing" },
+  { name = "text", value = "300" },
+  { name = "zero", value = 0 },
+  { name = "negative", value = -1 },
+}) do
+  test(case.name .. " expires_in is rejected rather than assuming a default lifetime", function()
+    env.now = 86401
+    local json = require("PhotoDeckJSON")
+    local item = tokenResponse()
+    local body = json.decode(item.body)
+    body.expires_in = case.value
+    item.body = json.encode(body)
+    enqueue(item)
+    local token, message = env.auth.getAccessToken()
+    equal(token, nil)
+    contains(message, "reconnect")
+    equal(env.auth.getAccessToken(), nil)
+    equal(#env.calls, 1)
+  end)
+end
+
+test("concurrent refresh callers and late 401s share a single rotated pair", function()
+  cooperativeTasks()
+  local item = tokenResponse()
+  item.inspect = function() coroutine.yield("refreshing") end
+  enqueue(item)
+  env.now = 86401
+  local firstToken, secondToken
+  local first = coroutine.create(function() firstToken = env.auth.getAccessToken("test-access") end)
+  local second = coroutine.create(function() secondToken = env.auth.getAccessToken("test-access") end)
+  local ok, state = coroutine.resume(first)
+  assert(ok, state)
+  equal(state, "refreshing")
+  ok, state = coroutine.resume(second)
+  assert(ok, state)
+  equal(state, "waiting")
+  assert(coroutine.resume(first))
+  assert(coroutine.resume(second))
+  equal(coroutine.status(first), "dead")
+  equal(coroutine.status(second), "dead")
+  equal(firstToken, "new-access")
+  equal(secondToken, "new-access")
+  equal(env.auth.getAccessToken("test-access"), "new-access")
+  equal(#env.calls, 1)
+  equal(#env.writes, 2)
+end)
+
+for _, case in ipairs({
+  { name = "invalid grant", status = 400, body = '{"error":"invalid_grant","error_description":"Refresh token used"}' },
+  { name = "ambiguous network failure", status = 0 },
+  { name = "malformed success", status = 200, body = '{"access_token":"only-one-token","expires_in":86400,"token_type":"Bearer"}' },
+  { name = "unexpected redirect", status = 307, body = "", headers = { { field = "Location", value = "https://evil.example/token" } } },
+  { name = "HTML upstream failure", status = 503, body = "upstream error", contentType = "text/html" },
+}) do
+  test("refresh " .. case.name .. " requires reconnect without replay, even after restart", function()
+    env.now = 86401
+    enqueue(response(case.status, case.body, case.headers, case.contentType))
+    local token, message = env.auth.getAccessToken()
+    equal(token, nil)
+    contains(message, "reconnect")
+    equal(env.auth.isConnected(), false)
+    equal(env.auth.getAccessToken(), nil)
+    package.loaded.PhotoDeckOAuth = nil
+    local restored = require("PhotoDeckOAuth").connection("test-client", "test-connection", oauthOrigin, apiOrigin)
+    equal(restored.getAccessToken(), nil)
+    equal(#env.calls, 1)
+    local record = require("PhotoDeckJSON").decode(env.vault[env.credentialKey])
+    equal(record.reconnect_required, true)
+    equal(record.access_token, nil)
+  end)
+end
+
+test("secure-store failure before refresh prevents consuming its single-use token", function()
+  env.now = 86401
+  env.storageWriteError = true
+  local token, message = env.auth.getAccessToken()
+  equal(token, nil)
+  contains(message, "secure credential storage")
+  equal(#env.calls, 0)
+  env.storageWriteError = false
+  equal(env.auth.getAccessToken(), nil)
+  equal(#env.calls, 0)
+end)
+
+test("failure to save rotated tokens revokes the replacement and never retries refresh", function()
+  env.now = 86401
+  local item = tokenResponse()
+  item.inspect = function() env.storageWriteError = true end
+  enqueue(item, response(200, "", {}, "text/plain"))
+  local token, message = env.auth.getAccessToken()
+  equal(token, nil)
+  contains(message, "secure credential storage")
+  equal(#env.calls, 2)
+  equal(env.calls[2].url, oauthOrigin .. "/oauth/revoke")
+  equal(formParams(env.calls[2].body).token, "new-refresh")
+  env.storageWriteError = false
+  equal(env.auth.getAccessToken(), nil)
+  equal(require("PhotoDeckJSON").decode(env.vault[env.credentialKey]).reconnect_required, true)
+end)
+
+test("disconnect waits for refresh and revokes its replacement token", function()
+  cooperativeTasks()
+  env.now = 86401
+  local item = tokenResponse()
+  item.inspect = function() coroutine.yield("refreshing") end
+  enqueue(item, response(200, "", {}, "text/plain"))
+  local disconnected
+  local first = coroutine.create(function() assert(env.auth.getAccessToken()) end)
+  local second = coroutine.create(function() disconnected = env.auth.disconnect() end)
+  assert(coroutine.resume(first))
+  assert(coroutine.resume(second))
+  assert(coroutine.resume(first))
+  assert(coroutine.resume(second))
+  equal(disconnected, true)
+  equal(formParams(env.calls[2].body).token, "new-refresh")
+  equal(env.vault[env.credentialKey], "{}")
+  equal(env.auth.isConnected(), false)
+end)
+
+test("failed remote revocation still removes local credentials and explains recovery", function()
+  enqueue(response(503, "upstream error", {}, "text/html"))
+  local success, message = env.auth.disconnect()
+  equal(success, nil)
+  contains(message, "Connected apps")
+  equal(env.vault[env.credentialKey], "{}")
+  equal(env.auth.getAccessToken(), nil)
+  equal(#env.calls, 1)
+end)
+
+test("a lost code-exchange response is never replayed", function()
+  local oauth = require("PhotoDeckOAuth")
+  env.onBrowserURL = function(url)
+    env.callbackURL = callback(formParams(url:match("%?(.*)")))
+    assert(oauth.receiveCallback(env.callbackURL))
+  end
+  enqueue(response(0, nil))
+  local success, message = env.api.authorize({ oauthClientId = "test-client", oauthConnectionId = "fresh" })
+  equal(success, nil)
+  contains(message, "reconnect")
+  assert(not oauth.receiveCallback(env.callbackURL))
+  equal(#env.calls, 1)
+end)
+
+test("reconnect revokes the old connection before saving a newly authorized pair", function()
+  local oauth = require("PhotoDeckOAuth")
+  env.onBrowserURL = function(url) assert(oauth.receiveCallback(callback(formParams(url:match("%?(.*)"))))) end
+  enqueue(response(200, "", {}, "text/plain"), tokenResponse())
+  assert(env.api.authorize(env.settings))
+  equal(env.calls[1].url, oauthOrigin .. "/oauth/revoke")
+  equal(env.calls[2].url, oauthOrigin .. "/oauth/token")
+  equal(env.auth.getAccessToken(), "new-access")
+end)
+
+test("missing client ID fails before generating or opening authorization", function()
+  local success, message = env.api.authorize({})
+  equal(success, nil)
+  contains(message, "client ID")
+  equal(env.randomCount, 0)
+  equal(env.browserURL, nil)
+end)
+
+test("concurrent initialization shares the same connection controller and refresh lock", function()
+  cooperativeTasks()
+  local oauth = require("PhotoDeckOAuth")
+  local retrieve = env.modules.LrPasswords.retrieve
+  env.modules.LrPasswords.retrieve = function(key)
+    coroutine.yield("loading")
+    return retrieve(key)
+  end
+  local firstConnection, secondConnection
+  local first = coroutine.create(function() firstConnection = oauth.connection("test-client", "new-connection") end)
+  assert(coroutine.resume(first))
+  secondConnection = oauth.connection("test-client", "new-connection")
+  assert(coroutine.resume(first))
+  equal(firstConnection, secondConnection)
+end)
+
+test("secure-store read failures are sanitized and never fall back to unprotected storage", function()
+  env.storageReadError = true
+  local connection = require("PhotoDeckOAuth").connection("test-client", "fresh")
+  local token, message = connection.getAccessToken()
+  equal(token, nil)
+  contains(message, "secure credential storage")
+  absent(message, "secret storage error")
+  equal(#env.calls, 0)
+  equal(#env.writes, 0)
+end)
+
+test("simultaneous authorization attempts do not replace the pending verifier or state", function()
+  cooperativeTasks()
+  local oauth = require("PhotoDeckOAuth")
+  local connection = oauth.connection("test-client", "fresh")
+  local firstResult
+  local first = coroutine.create(function() firstResult = connection.authorize() end)
+  assert(coroutine.resume(first))
+  local secondResult, message = connection.authorize()
+  equal(secondResult, nil)
+  contains(message, "already in progress")
+  local url = env.browserURL
+  assert(oauth.receiveCallback(callback(formParams(url:match("%?(.*)")))))
+  enqueue(tokenResponse())
+  assert(coroutine.resume(first))
+  equal(firstResult, true)
+  equal(#env.calls, 1)
+end)
+
+test("manifest and URL handler route the registered callback to this plugin", function()
+  local manifest = dofile("Info.lua")
+  assert(type(manifest.LrToolkitIdentifier) == "string" and manifest.LrToolkitIdentifier ~= "")
+  equal(manifest.URLHandler, "PhotoDeckURLHandler.lua")
+  equal(require("PhotoDeckOAuth").redirectURI, "lightroom://" .. manifest.LrToolkitIdentifier .. "/oauth/callback")
+  env.onBrowserURL = function(url) dofile(manifest.URLHandler).URLHandler(callback(formParams(url:match("%?(.*)")))) end
+  enqueue(tokenResponse())
+  assert(env.api.authorize({ oauthClientId = "test-client" }))
+end)
+
+test("the OAuth callback URI follows the active plugin's toolkit identifier", function()
+  _G._PLUGIN.id = "com.example.photodeck"
+  package.loaded.PhotoDeckOAuth = nil
+  equal(require("PhotoDeckOAuth").redirectURI, "lightroom://com.example.photodeck/oauth/callback")
+end)
+
+test("an embedded public client ID takes precedence over user configuration", function()
+  local official = apiWithClientId("official-client")
+  equal(official.hasDistributionClientId, true)
+  env.onBrowserURL = function(url)
+    local params = formParams(url:match("%?(.*)"))
+    equal(params.client_id, "official-client")
+    assert(require("PhotoDeckOAuth").receiveCallback(callback(params)))
+  end
+  enqueue(tokenResponse())
+  assert(official.authorize({ oauthClientId = "ignored-client", oauthConnectionId = "official-connection" }))
+  equal(formParams(env.calls[1].body).client_id, "official-client")
+end)
+
+for _, windows in ipairs({ false, true }) do
+  test((windows and "Windows" or "macOS") .. " PKCE invocation handles Unicode paths and removes private output", function()
+    _G.WIN_ENV = windows
+    _G._PLUGIN.path = "/plugins/é😀's % plugin"
+    local path = "/temp/é😀's % private.json"
+    local removed, encoded
+    env.modules.LrPathUtils.child = function(parent, name) return parent .. "/" .. name end
+    env.modules.LrPathUtils.getStandardFilePath = function() return "/temp" end
+    env.modules.LrFileUtils.chooseUniqueFileName = function() return path end
+    env.modules.LrFileUtils.delete = function(value) removed = value; return true end
+    local data = require("PhotoDeckPKCE").generate()
+    env.modules.LrStringUtils.encodeBase64 = function(value) encoded = value; return "encoded-command" end
+    local text = require("PhotoDeckJSON").encode(data)
+    _G.io = { open = function(value, mode)
+      equal(value, path)
+      equal(mode, "rb")
+      return { read = function() return text end, close = function() end }
+    end }
+    env.modules.LrTasks.execute = function(command)
+      absent(command, data.verifier)
+      if windows then
+        contains(command, "-EncodedCommand encoded-command")
+        contains(encoded, string.char(233, 0, 61, 216, 0, 222)) -- é + UTF-16 surrogate pair for 😀
+        contains(encoded, "'\000'\000s\000") -- PowerShell single-quote escaping
+      else
+        contains(command, "/bin/sh '")
+        contains(command, "'\\''s")
+        contains(command, "é😀")
+      end
+      return 0
+    end
+    local actual = assert(env.realPKCE())
+    equal(actual.verifier, data.verifier)
+    equal(removed, path)
+    removed = nil
+    text = '{"verifier":"invalid"}'
+    local value, message = env.realPKCE()
+    equal(value, nil)
+    contains(message, "secure authorization data")
+    equal(removed, path)
+    removed = nil
+    env.modules.LrTasks.execute = function() return 1 end
+    equal(env.realPKCE(), nil)
+    equal(removed, nil) -- a failed exclusive create must not delete someone else's file
+  end)
+end
+
+test("OAuth settings restore securely, remove password fields and expose reconnect/disconnect", function()
+  local dialogs = require("PhotoDeckDialogs")
+  local settings = { oauthClientId = "test-client", oauthConnectionId = "test-connection", password = "obsolete", apiSecret = "obsolete", addObserver = function() end }
+  enqueue(
+    response(200, '{"email":"user@example.com","firstname":"Test","lastname":"User"}'),
+    response(200, '[{"uuid":"w","urlname":"site","title":"Site","hostname":"example.com"}]'),
+    response(200, '[{"uuid":"a","name":"Library"}]'),
+    response(200, "[]")
+  )
+  dialogs.startDialog(settings)
+  equal(settings.loggedin, true)
+  equal(settings.oauthBusy, false)
+  equal(settings.password, nil)
+  equal(settings.apiSecret, nil)
+  equal(env.browserURL, nil)
+  local buttons, controls, parents = {}, {}, {}
+  local function visit(view, parent)
+    if type(view) ~= "table" then return end
+    if view.action then buttons[view.title], controls[view.title], parents[view.title] = view.action, view, parent end
+    for _, child in ipairs(view) do visit(child, view) end
+  end
+  visit(dialogs.sectionsForTopOfDialog(env.modules.LrView.osFactory(), settings))
+  assert(buttons["Connect / Reconnect"])
+  equal(parents["Connect / Reconnect"], parents.Disconnect)
+  equal(env.viewTypes[parents.Disconnect], "row")
+  equal(controls.Disconnect.visible[1], "loggedin")
+  enqueue(response(200, "", {}, "text/plain"))
+  buttons.Disconnect()
+  equal(settings.loggedin, false)
+  equal(settings.oauthBusy, false)
+  equal(env.vault[env.credentialKey], "{}")
+  local fields = require("PhotoDeckPublishServiceProvider").exportPresetFields
+  for _, item in ipairs(fields) do
+    assert(item.key ~= "password" and item.key ~= "apiSecret" and not item.key:find("[Tt]oken"))
+  end
+end)
+
+test("a new service completes browser authorization across Lightroom-style protected coroutines", function()
+  cooperativeTasks()
+  local dialogs = require("PhotoDeckDialogs")
+  local settings = { oauthClientId = "test-client", LR_editingExistingPublishConnection = false, addObserver = function() end }
+  dialogs.startDialog(settings)
+  equal(settings.loggedin, false)
+  local controls = {}
+  local function visit(view)
+    if type(view) ~= "table" then return end
+    if view.action then controls[view.title] = view end
+    for _, child in ipairs(view) do visit(child) end
+  end
+  visit(dialogs.sectionsForTopOfDialog(env.modules.LrView.osFactory(), settings))
+  equal(controls.Disconnect.visible[1], "loggedin")
+  equal(settings[controls.Disconnect.visible[1]], false)
+  env.onBrowserURL = function(url)
+    dofile("PhotoDeckURLHandler.lua").URLHandler(callback(formParams(url:match("%?(.*)"))))
+  end
+  enqueue(
+    tokenResponse(),
+    response(200, '{"email":"user@example.com","firstname":"Test","lastname":"User"}', rateHeaders(60, 60, 60)),
+    response(200, '[{"uuid":"w","urlname":"site","title":"Site","hostname":"example.com"}]'),
+    response(200, '[{"uuid":"a","name":"Library"}]'),
+    response(200, "[]")
+  )
+  controls["Connect / Reconnect"].action()
+  equal(settings.loggedin, true)
+  equal(settings.oauthBusy, false)
+  equal(settings.connectionStatus, "Logged in as Test User")
+  equal(settings[controls.Disconnect.visible[1]], true)
+  equal(header(env.calls[2], "Authorization"), "Bearer new-access")
+  equal(env.calls[2].url, apiOrigin .. "/whoami.json")
+  equal(#env.calls, 5)
+end)
+
+test("canceling client-ID edits preserves credentials; accepting them revokes the old connection", function()
+  local settings = { oauthClientId = "test-client", oauthConnectionId = "test-connection" }
+  local accepted = false
+  env.modules.LrDialogs.presentModalDialog = function(dialog)
+    dialog.contents.bind_to_object.oauthClientId = "changed-client"
+    return accepted and "ok" or "cancel"
+  end
+  local dialogs = require("PhotoDeckDialogs")
+  dialogs.updateClientId(settings)
+  equal(settings.oauthClientId, "test-client")
+  equal(settings.oauthConnectionId, "test-connection")
+  equal(#env.calls, 0)
+  accepted = true
+  enqueue(response(200, "", {}, "text/plain"))
+  dialogs.updateClientId(settings)
+  equal(settings.oauthClientId, "changed-client")
+  equal(settings.oauthConnectionId, nil)
+  equal(env.calls[1].url, oauthOrigin .. "/oauth/revoke")
+  equal(env.vault[env.credentialKey], "{}")
 end)
 
 section("HTTP responses, redirects and retries")
 
-test("307 preserves the JSON body and PUT method, retains cookies and signs destination", function()
+test("307 preserves the JSON body, method and bearer token but ignores cookies", function()
   local client = httpClient()
   enqueue(
     response(307, "", {
@@ -625,8 +1334,9 @@ test("307 preserves the JSON body and PUT method, retains cookies and signs dest
   equal(body.media.title, "A title")
   equal(#body.media.publish_to_gallery_uuids, 2)
   equal(body.media.publish_to_gallery_uuids[2], "two")
-  equal(header(env.calls[2], "Cookie"), "routing=node-2")
-  contains(env.signatures[2], "PUT\n/medias/m.json\nrouting=second%2Bnode\n")
+  equal(header(env.calls[2], "Cookie"), "")
+  equal(header(env.calls[2], "Authorization"), "Bearer test-access")
+  equal(env.calls[2].url, apiOrigin .. "/medias/m.json?routing=second%2Bnode")
   absent(env.calls[2].body, "_method")
 end)
 
@@ -681,15 +1391,14 @@ test("malformed successful bodies and non-JSON errors are reported safely", func
   equal(#env.calls, 2)
 end)
 
-test("HTML 403 rejects JSON mutations without retrying or clearing the session", function()
+test("HTML 403 rejects JSON mutations without retrying or invalidating bearer credentials", function()
   local client, state = httpClient()
-  state.loggedin = true
   enqueue(response(403, "<!DOCTYPE html><h1>Access denied</h1>", {}, "text/html; charset=utf-8"))
   local result, message = client.request("PUT", "/medias/m.json", { media = { title = "Title" } })
   equal(result, nil)
   equal(message, "HTTP error 403")
   equal(#env.calls, 1)
-  equal(state.loggedin, true)
+  equal(state.isConnected(), true)
   equal(payload(env.calls[1]).media.title, "Title")
 end)
 
@@ -796,13 +1505,14 @@ test("shared-quota consumption by other clients increases Lightroom's spacing", 
   near(env.calls[4].time - env.calls[3].time, 60 * 0.95 ^ 10)
 end)
 
-test("an exhausted quota blocks requests until reset, including after cookie reset", function()
+test("an exhausted quota blocks requests until reset, including after token refresh", function()
   local client = httpClient()
   enqueue(response(200, "[]", rateHeaders("60,60;w=60", 0, 45)), response(200, "[]"))
   assert(client.request("GET", "/artists.json"))
-  client.reset()
+  table.insert(env.responses, 1, tokenResponse())
+  equal(env.auth.getAccessToken("test-access"), "new-access")
   assert(client.request("GET", "/artists.json"))
-  near(env.calls[2].time, 45)
+  near(env.calls[3].time, 45)
 end)
 
 test("zero capacity waits for the policy window without dividing by zero", function()
@@ -862,6 +1572,59 @@ test("responses from concurrent requests cannot shorten a Retry-After block", fu
   assert(env.calls[3].time >= 61 and env.calls[4].time >= 61)
 end)
 
+test("requests waiting for refresh honor Retry-After received before refresh completes", function()
+  cooperativeTasks()
+  local tokenCalls = 0
+  local client = require("PhotoDeckHttp").new({ getAccessToken = function()
+    tokenCalls = tokenCalls + 1
+    if tokenCalls == 2 then coroutine.yield("refreshing") end
+    return "test-access"
+  end }, apiOrigin)
+  local throttled = response(200, "[]", { { field = "Retry-After", value = "60" } })
+  throttled.inspect = function() coroutine.yield("receiving") end
+  enqueue(throttled, response(200, "[]"))
+
+  local function request() assert(client.request("GET", "/artists.json")) end
+  local first, waiting = coroutine.create(request), coroutine.create(request)
+  assert(coroutine.resume(first)) -- The initial API response is still in flight.
+  env.now = 1
+  assert(coroutine.resume(waiting)) -- Suspend token acquisition as a refresh would.
+  assert(coroutine.resume(first)) -- Receive Retry-After while refresh is pending.
+  equal(coroutine.status(first), "dead")
+  assert(coroutine.resume(waiting))
+  equal(#env.calls, 1) -- Acquiring the token must not bypass the new cooldown.
+
+  env.now = 61
+  assert(coroutine.resume(waiting))
+  equal(coroutine.status(waiting), "dead")
+  equal(env.calls[2].time, 61)
+end)
+
+test("requests released by a shared refresh reserve separate API throttle slots", function()
+  cooperativeTasks()
+  local client = require("PhotoDeckHttp").new({ getAccessToken = function()
+    coroutine.yield("refreshing")
+    return "test-access"
+  end }, apiOrigin)
+  enqueue(response(200, "[]"), response(200, "[]"))
+  local function request() assert(client.request("GET", "/artists.json")) end
+  local first, second = coroutine.create(request), coroutine.create(request)
+  assert(coroutine.resume(first))
+  env.now = 1
+  assert(coroutine.resume(second))
+
+  env.now = 10
+  assert(coroutine.resume(first))
+  equal(coroutine.status(first), "dead")
+  equal(env.calls[1].time, 10)
+  assert(coroutine.resume(second))
+  equal(#env.calls, 1) -- Both waiters must not send together after the refresh.
+  env.now = 11
+  assert(coroutine.resume(second))
+  equal(coroutine.status(second), "dead")
+  equal(env.calls[2].time, 11)
+end)
+
 section("Discovery, pagination and caching")
 
 test("lists follow exact next URLs, ignore monitor/count hints, and deduplicate", function()
@@ -877,7 +1640,7 @@ test("lists follow exact next URLs, ignore monitor/count hints, and deduplicate"
   equal(count(galleries), 2)
   equal(galleries.g.name, "New")
   equal(env.calls[2].url, apiOrigin .. nextURL)
-  contains(env.signatures[2], "token=a%2bb,c&per_page=1&page=7\n")
+  equal(header(env.calls[2], "Authorization"), "Bearer test-access")
   equal(#env.calls, 2)
 end)
 
@@ -958,9 +1721,12 @@ test("concurrent first use of website details shares one request", function()
 end)
 
 test("cache reset during a load does not cache resources from the previous account", function()
+  local json = require("PhotoDeckJSON")
+  env.vault["oauth2:" .. json.encode({ oauthOrigin, apiOrigin, "test-client", "other-connection" })] =
+    json.encode({ access_token = "other-access", refresh_token = "other-refresh", expires_at = 86400 })
   local item = response(200, '{"uuid":"old-site","home_url":"https://old.example.com"}')
   item.inspect = function()
-    env.api.connect("test-key", "test-secret", "other@example.com", "other-password")
+    env.api.connect({ oauthClientId = "test-client", oauthConnectionId = "other-connection" })
   end
   enqueue(item, response(200, '{"uuid":"new-site","home_url":"https://new.example.com"}'))
   equal(assert(env.api.website("site", true)).uuid, "old-site")
@@ -969,7 +1735,37 @@ test("cache reset during a load does not cache resources from the previous accou
   equal(#env.calls, 2)
 end)
 
-test("empty discovery and authorization failures do not mark authenticated sessions logged out", function()
+test("concurrent services keep bearer tokens and cached resources isolated across protected loads", function()
+  cooperativeTasks()
+  local json = require("PhotoDeckJSON")
+  env.vault["oauth2:" .. json.encode({ oauthOrigin, apiOrigin, "test-client", "other-connection" })] =
+    json.encode({ access_token = "other-access", refresh_token = "other-refresh", expires_at = 86400 })
+  local item = response(200, '{"uuid":"first-site","home_url":"https://first.example.com"}')
+  item.inspect = function() coroutine.yield("receiving") end
+  enqueue(item, response(200, '{"uuid":"second-site","home_url":"https://second.example.com"}'))
+  local first = coroutine.create(function()
+    env.api.connect(env.settings)
+    equal(assert(env.api.website("site", true)).uuid, "first-site")
+    equal(assert(env.api.website("site", true)).uuid, "first-site")
+  end)
+  local second = coroutine.create(function()
+    env.api.connect({ oauthClientId = "test-client", oauthConnectionId = "other-connection" })
+    equal(assert(env.api.website("site", true)).uuid, "second-site")
+  end)
+  assert(coroutine.resume(first))
+  env.now = 10
+  local ok, message = coroutine.resume(second)
+  assert(ok, message)
+  equal(coroutine.status(second), "dead")
+  ok, message = coroutine.resume(first)
+  assert(ok, message)
+  equal(coroutine.status(first), "dead")
+  equal(#env.calls, 2)
+  equal(header(env.calls[1], "Authorization"), "Bearer test-access")
+  equal(header(env.calls[2], "Authorization"), "Bearer other-access")
+end)
+
+test("empty discovery and authorization failures do not invalidate bearer credentials", function()
   env.api.loggedin = true
   enqueue(response(200, "[]"), response(403, '{"error":"No rights"}'))
   local _, message = env.api.artists()
@@ -1194,10 +1990,8 @@ test("gallery settings load live details on demand", function()
   enqueue(response(200, '{"uuid":"g","name":"Live name","description":"Live introduction","gallery_display_style_uuid":"live-style"}'))
   local dialogs = require("PhotoDeckDialogs")
   dialogs.viewForCollectionSettings(env.modules.LrView.osFactory(), {
-    apiKey = "test-key",
-    apiSecret = "test-secret",
-    username = "user@example.com",
-    password = "test-password",
+    oauthClientId = "test-client",
+    oauthConnectionId = "test-connection",
     websiteChosen = "site",
   }, { publishedCollection = collection, collectionSettings = settings })
   equal(settings.description, "Live introduction")
@@ -1305,7 +2099,7 @@ test("batch selections split at 3000 and acknowledge accepted chunks", function(
   for index, call in ipairs(env.calls) do
     equal(call.method, "PATCH")
     equal(call.url, apiOrigin .. "/medias.json")
-    contains(env.signatures[index], "PATCH\n/medias.json\n\n")
+    equal(header(env.calls[index], "Authorization"), "Bearer test-access")
   end
   equal(#accepted, 6001)
   for index, id in ipairs(ids) do
@@ -1335,7 +2129,7 @@ test("partial batch failure only acknowledges accepted IDs", function()
   for index, call in ipairs(env.calls) do
     equal(call.method, "PATCH")
     equal(call.url, apiOrigin .. "/medias.json")
-    contains(env.signatures[index], "PATCH\n/medias.json\n\n")
+    equal(header(env.calls[index], "Authorization"), "Bearer test-access")
   end
 end)
 
@@ -1385,9 +2179,11 @@ test("raw upload transfers bytes to signed storage and confirms completion", fun
   equal(confirmed.mime_type, "image/jpeg")
   equal(confirmed.file_size, #env.calls[2].body)
   equal(type(confirmed.upload_duration), "number")
-  equal(#env.signatures, 2)
+  equal(header(env.calls[1], "Authorization"), "Bearer test-access")
+  equal(header(env.calls[3], "Authorization"), "Bearer test-access")
   for _, line in ipairs(env.logs) do
-    absent(line, "test-password")
+    absent(line, "test-access")
+    absent(line, "test-refresh")
     absent(line, "test-secret")
     absent(line, "signed-value")
     absent(line, "storage-policy")
@@ -1741,10 +2537,8 @@ local function runPublish(options)
   end
   local exportContext = {
     propertyTable = {
-      apiKey = "test-key",
-      apiSecret = "test-secret",
-      username = "user@example.com",
-      password = "test-password",
+      oauthClientId = "test-client",
+      oauthConnectionId = "test-connection",
       websiteChosen = "site",
       LR_isExportForPublish = options.publish,
       LR_format = "JPEG",
@@ -1876,10 +2670,8 @@ test("provider preserves per-chunk acknowledgments on batch failure", function()
   local ok, message = pcall(
     require("PhotoDeckPublishServiceProvider").deletePhotosFromPublishedCollection,
     {
-      apiKey = "test-key",
-      apiSecret = "test-secret",
-      username = "user@example.com",
-      password = "test-password",
+      oauthClientId = "test-client",
+      oauthConnectionId = "test-connection",
     },
     ids,
     function()
@@ -1909,6 +2701,9 @@ test("French and German translations cover active keys without stale entries", f
     "PhotoDeckDialogs.lua",
     "PhotoDeckHttp.lua",
     "PhotoDeckJSON.lua",
+    "PhotoDeckOAuth.lua",
+    "PhotoDeckPKCE.lua",
+    "PhotoDeckURLHandler.lua",
     "PhotoDeckMetadataDefinition.lua",
     "PhotoDeckPublishServiceProvider.lua",
     "PhotoDeckUtils.lua",
@@ -1969,6 +2764,10 @@ for _, item in ipairs(tests) do
     assert(#env.responses == 0, "Unconsumed HTTP response fixtures: " .. #env.responses)
     for _, call in ipairs(env.calls) do
       if call.url:sub(1, #apiOrigin + 1) == apiOrigin .. "/" then
+        assert((header(call, "Authorization") or ""):match("^Bearer %S+$"), "API request missing bearer token")
+        equal(header(call, "X-PhotoDeck-Authorization"), nil)
+        equal(header(call, "X-PhotoDeck-Timestamp"), nil)
+        equal(header(call, "Cookie"), "")
         if call.method == "GET" then
           equal(call.body, "")
           equal(header(call, "Content-Type"), nil)

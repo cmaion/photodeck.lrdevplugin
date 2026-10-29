@@ -57,10 +57,8 @@ end
 
 -- These fields get stored between uses
 publishServiceProvider.exportPresetFields = {
-  { key = "username", default = "" },
-  { key = "password", default = "" },
-  { key = "apiKey", default = "" },
-  { key = "apiSecret", default = "" },
+  { key = "oauthClientId", default = "" },
+  { key = "oauthConnectionId", default = "" },
   { key = "websiteChosen", default = "" },
   { key = "artistChosen", default = nil },
   { key = "watermarkChosen", default = "" },
@@ -70,6 +68,9 @@ publishServiceProvider.exportPresetFields = {
 
 -- Plugin settings dialog
 publishServiceProvider.startDialog = PhotoDeckDialogs.startDialog
+publishServiceProvider.endDialog = function(propertyTable)
+  propertyTable.oauthCanceled = true
+end
 publishServiceProvider.sectionsForTopOfDialog = PhotoDeckDialogs.sectionsForTopOfDialog
 
 -- Dialog when a publish service has been created
@@ -201,7 +202,7 @@ function publishServiceProvider.processRenderedPhotos(functionContext, exportCon
   local error_msg
   local cancel_next_uploads = false
 
-  PhotoDeckAPI.connect(exportSettings.apiKey, exportSettings.apiSecret, exportSettings.username, exportSettings.password)
+  PhotoDeckAPI.connect(exportSettings)
 
   -- Set progress title.
   local progressScope = exportContext:configureProgress({
@@ -400,7 +401,7 @@ end
 -- Delete photo from published collection
 publishServiceProvider.deletePhotosFromPublishedCollection = function(publishSettings, arrayOfPhotoIds, deletedCallback, localCollectionId)
   log_trace("publishServiceProvider.deletePhotosFromPublishedCollection")
-  PhotoDeckAPI.connect(publishSettings.apiKey, publishSettings.apiSecret, publishSettings.username, publishSettings.password)
+  PhotoDeckAPI.connect(publishSettings)
   local catalog = LrApplication.activeCatalog()
   local collection = catalog:getPublishedCollectionByLocalIdentifier(localCollectionId)
   local galleryId = collection:getRemoteId()
@@ -482,7 +483,7 @@ end
 -- Update published collection
 publishServiceProvider.updateCollectionSettings = function(publishSettings, info)
   log_trace("publishServiceProvider.updateCollectionSettings")
-  PhotoDeckAPI.connect(publishSettings.apiKey, publishSettings.apiSecret, publishSettings.username, publishSettings.password)
+  PhotoDeckAPI.connect(publishSettings)
   local urlname = publishSettings.websiteChosen
   local result, error_msg = PhotoDeckAPI.createOrUpdateGallery(urlname, info, true)
   if error_msg then
@@ -493,7 +494,7 @@ end
 -- Update published collection set
 publishServiceProvider.updateCollectionSetSettings = function(publishSettings, info)
   log_trace("publishServiceProvider.updateCollectionSetSettings")
-  PhotoDeckAPI.connect(publishSettings.apiKey, publishSettings.apiSecret, publishSettings.username, publishSettings.password)
+  PhotoDeckAPI.connect(publishSettings)
   local urlname = publishSettings.websiteChosen
   local result, error_msg = PhotoDeckAPI.createOrUpdateGallery(urlname, info, true)
   if error_msg then
@@ -504,7 +505,7 @@ end
 -- Rename published collection
 publishServiceProvider.renamePublishedCollection = function(publishSettings, info)
   log_trace("publishServiceProvider.renamePublishedCollection")
-  PhotoDeckAPI.connect(publishSettings.apiKey, publishSettings.apiSecret, publishSettings.username, publishSettings.password)
+  PhotoDeckAPI.connect(publishSettings)
   local urlname = publishSettings.websiteChosen
   local result, error_msg = PhotoDeckAPI.createOrUpdateGallery(urlname, info)
   if error_msg then
@@ -515,7 +516,7 @@ end
 -- Reparent published collection
 publishServiceProvider.reparentPublishedCollection = function(publishSettings, info)
   log_trace("publishServiceProvider.reparentPublishedCollection")
-  PhotoDeckAPI.connect(publishSettings.apiKey, publishSettings.apiSecret, publishSettings.username, publishSettings.password)
+  PhotoDeckAPI.connect(publishSettings)
   local urlname = publishSettings.websiteChosen
   local result, error_msg = PhotoDeckAPI.createOrUpdateGallery(urlname, info)
   if error_msg then
@@ -526,7 +527,7 @@ end
 -- Delete published collection
 publishServiceProvider.deletePublishedCollection = function(publishSettings, info)
   log_trace("publishServiceProvider.deletePublishedCollection")
-  PhotoDeckAPI.connect(publishSettings.apiKey, publishSettings.apiSecret, publishSettings.username, publishSettings.password)
+  PhotoDeckAPI.connect(publishSettings)
   local urlname = publishSettings.websiteChosen
   local galleryId = info.remoteId
   local result, error_msg = PhotoDeckAPI.deleteGallery(urlname, galleryId)
@@ -571,7 +572,7 @@ end
 -- Reorder collection
 publishServiceProvider.imposeSortOrderOnPublishedCollection = function(publishSettings, info, remoteIdSequence)
   log_trace("publishServiceProvider.imposeSortOrderOnPublishedCollection")
-  PhotoDeckAPI.connect(publishSettings.apiKey, publishSettings.apiSecret, publishSettings.username, publishSettings.password)
+  PhotoDeckAPI.connect(publishSettings)
 
   local urlname = publishSettings.websiteChosen
   local galleryId = info.remoteCollectionId

@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## 0.20.1
+
+- Migrate to the new PhotoDeck OAuth authentication flow.
+
 ## 0.20.0
 
 - Migrate to the PhotoDeck JSON API.

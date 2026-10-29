@@ -1,11 +1,7 @@
 local LrDate = import("LrDate")
-local LrDigest = import("LrDigest")
-local LrDialogs = import("LrDialogs")
 local LrFileUtils = import("LrFileUtils")
 local LrHttp = import("LrHttp")
-local LrStringUtils = import("LrStringUtils")
 local LrTasks = import("LrTasks")
-local LrView = import("LrView")
 local JSON = require("PhotoDeckJSON")
 
 local logger = import("LrLogger")("PhotoDeckPublishLightroomPlugin")
@@ -14,7 +10,6 @@ local log_trace = logger:quick("trace")
 
 local Http = {}
 local months = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" }
-local weekdays = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" }
 
 function Http.encode(value)
   if type(value) == "boolean" then
@@ -54,18 +49,12 @@ local function queryFields(params)
   return result
 end
 
-local function queryEncode(params)
+function Http.formEncode(params)
   local result = {}
   for _, field in ipairs(queryFields(params)) do
     result[#result + 1] = Http.encode(field.name) .. "=" .. Http.encode(field.value)
   end
   return table.concat(result, "&")
-end
-
-local function timestamp()
-  -- LrDate's user-format function localizes day/month names, even in GMT.
-  local year, month, day, hour, minute, second, weekday = LrDate.timestampToComponents(LrDate.currentTime(), 0)
-  return string.format("%s, %02d %s %04d %02d:%02d:%02d GMT", weekdays[weekday], day, months[month], year, hour, minute, math.floor(second))
 end
 
 local function parseDate(value)
@@ -105,6 +94,8 @@ local function responseInfo(headers)
   end
   return info
 end
+
+Http.responseInfo = responseInfo
 
 local function header(info, name)
   return info.headers[name] and info.headers[name][1]
@@ -274,12 +265,17 @@ local networkErrorCodes = {
   requestFailed = true,
 }
 
+function Http.networkErrorCode(info)
+  local network = info.network_error or {}
+  return networkErrorCodes[network.errorCode] and network.errorCode or (info.network_error and "unknown" or "none")
+end
+
 local function logTransfer(media, info)
   -- Only machine codes and the non-secret location identifier, never URLs,
   -- response bodies, form parameters, cookie values or localized SDK messages.
   local location = type(media.upload_location) == "string" and media.upload_location:match("^[%w_-]+$") or "unknown"
   local network = info.network_error or {}
-  local code = networkErrorCodes[network.errorCode] and network.errorCode or (info.network_error and "unknown" or "none")
+  local code = Http.networkErrorCode(info)
   local native = tonumber(network.nativeCode)
   local kind = network.exceptionKind
   if kind ~= "yieldNotAllowed" and kind ~= "invalidArgument" and kind ~= "luaException" then
@@ -290,34 +286,11 @@ local function logTransfer(media, info)
   )
 end
 
-local function promptOTP(state)
-  state.otp = nil
-  local factory = LrView.osFactory()
-  local result = LrDialogs.presentModalDialog({
-    title = LOC("$$$/PhotoDeck/OTPDialog/Title=PhotoDeck Two-factor authentication"),
-    contents = factory:column({
-      spacing = factory:dialog_spacing(),
-      bind_to_object = state,
-      factory:row({
-        factory:static_text({ title = LOC("$$$/PhotoDeck/OTPDialog/Code=Authentication code:"), alignment = "right" }),
-        factory:edit_field({ value = LrView.bind("otp"), immediate = false, width_in_chars = 6 }),
-      }),
-    }),
-  })
-  return result == "ok" and state.otp and state.otp ~= ""
-end
-
 function Http.new(state, baseURL)
   local client = {}
-  local cookies = {}
   local nextRequest, blockedUntil, interval, lastRequest = 0, 0, 1, nil
   local rateLimit = { aggressiveness = 10, capacity = 60, remaining = 60, window = 60, reset = 60 }
   local origin = assert(baseURL:match("^(https://[^/]+)$"))
-  local hostname = origin:match("^https://([^:]+)"):lower()
-
-  function client.reset()
-    cookies = {}
-  end
 
   function client.delayNext(seconds)
     nextRequest = math.max(nextRequest, LrDate.currentTime() + seconds)
@@ -341,50 +314,6 @@ function Http.new(state, baseURL)
       return nil
     end
     return url
-  end
-
-  local function retainCookies(info, path)
-    for _, raw in ipairs(info.headers["set-cookie"] or {}) do
-      local name, value = raw:match("^%s*([^=;%s]+)=([^;]*)")
-      if name then
-        local cookie = { name = name, value = value, path = path:match("^(.+)/") or "/", domain = hostname }
-        for attribute in raw:gmatch(";([^;]+)") do
-          local key, item = attribute:match("^%s*([^=%s]+)%s*=?%s*(.-)%s*$")
-          key = key and key:lower()
-          if key == "path" then
-            if item:sub(1, 1) == "/" then
-              cookie.path = item
-            end
-          elseif key == "domain" then
-            cookie.domain = item:lower():gsub("^%.", "")
-          elseif key == "max-age" and tonumber(item) then
-            cookie.expires = LrDate.currentTime() + tonumber(item)
-          elseif key == "expires" and not cookie.expires then
-            cookie.expires = parseDate(item)
-          end
-        end
-        if cookie.domain == hostname or hostname:sub(-#cookie.domain - 1) == "." .. cookie.domain then
-          local key = cookie.domain .. "\n" .. cookie.path .. "\n" .. name
-          cookies[key] = cookie
-        end
-      end
-    end
-  end
-
-  local function cookieHeader(path)
-    local values = {}
-    for key, cookie in pairs(cookies) do
-      if cookie.expires and cookie.expires <= LrDate.currentTime() then
-        cookies[key] = nil
-      elseif
-        path:sub(1, #cookie.path) == cookie.path
-        and (path == cookie.path or cookie.path:sub(-1) == "/" or path:sub(#cookie.path + 1, #cookie.path + 1) == "/")
-      then
-        values[#values + 1] = cookie.name .. "=" .. cookie.value
-      end
-    end
-    table.sort(values)
-    return table.concat(values, "; ")
   end
 
   local function throttle()
@@ -472,42 +401,44 @@ function Http.new(state, baseURL)
       return nil, LOC("$$$/PhotoDeck/API/UntrustedURL=Invalid or untrusted PhotoDeck API URL")
     end
     if method == "GET" and params and next(params) then
-      target = target .. (target:find("?", 1, true) and "&" or "?") .. queryEncode(params)
+      target = target .. (target:find("?", 1, true) and "&" or "?") .. Http.formEncode(params)
     end
     local parts, contentType = "", nil
     if method ~= "GET" then
       parts, contentType = JSON.encode(params or {}), "application/json"
     end
     local redirects, retries, authRetries = 0, 0, 0
+    -- Pin the connection for this request, even if another service is selected
+    -- while Lightroom yields during throttling or HTTP operations.
+    local auth = state
+    if type(state) == "function" then
+      auth = state()
+    end
+    local rejected
     while true do
-      local path, query = target:match("^([^?]+)%??(.*)$")
-      local needsUser = path ~= "/ping.json" and path ~= "/logout.json"
-      local wasLoggedIn = state.loggedin
+      local token, authError
+      if auth then
+        token, authError = auth.getAccessToken(rejected)
+      end
+      if not token then
+        log_trace(auth and "OAuth: API request blocked; access token unavailable" or "OAuth: API request blocked; no connection context")
+        return nil, authError or LOC("$$$/PhotoDeck/OAuth/ReconnectRequired=Please reconnect to PhotoDeck in the publish service settings")
+      end
+      -- Token acquisition can yield while another request refreshes. Reserve
+      -- the API slot afterward so newer cooldowns and concurrent sends apply.
       throttle()
-      local time = timestamp()
-      local signature = LrDigest.SHA1.digest(string.format("%s\n%s\n%s\n%s\n%s\n", method, path, query, state.secret, time)):lower()
       local headers = {
-        { field = "X-PhotoDeck-Timestamp", value = time },
-        { field = "X-PhotoDeck-Authorization", value = state.key .. ":" .. signature },
+        { field = "Authorization", value = "Bearer " .. token },
         { field = "Accept", value = "application/json" },
         -- An explicit header also isolates us from Lightroom's shared cookie jar.
-        { field = "Cookie", value = cookieHeader(path) },
+        { field = "Cookie", value = "" },
       }
-      if needsUser and not state.loggedin and state.username and state.username ~= "" and state.password and state.password ~= "" then
-        local password = state.password
-        if state.otpEnabled and state.otp then
-          password = password .. "+" .. state.otp
-          state.otp = nil
-        end
-        headers[#headers + 1] = { field = "Authorization", value = "Basic " .. LrStringUtils.encodeBase64(state.username .. ":" .. password) }
-      end
       if contentType then
         headers[#headers + 1] = { field = "Content-Type", value = contentType }
       end
-      log_trace(string.format(" -> %s %s", method, path))
+      log_trace(string.format(" -> %s %s", method, target:match("^[^?]+")))
       local body, responseHeaders = send(method, origin .. target, headers, parts)
       local info = responseInfo(responseHeaders)
-      retainCookies(info, path)
       updateLimits(info)
       log_trace(string.format(" <- %d [%s]", info.status, info.request_id or "No request ID"))
       if info.status == 307 then
@@ -523,9 +454,6 @@ function Http.new(state, baseURL)
           if decodeError then
             return nil, decodeError, info
           end
-          if needsUser then
-            state.loggedin = true
-          end
           return result, nil, info
         end
         local message = type(result) == "table" and result.error
@@ -534,9 +462,6 @@ function Http.new(state, baseURL)
             or info.status == 0 and LOC("$$$/PhotoDeck/API/NoResponse=No response from network")
             or LOC("$$$/PhotoDeck/API/HTTPError=HTTP error ^1", info.status)
         end
-        if info.status == 401 then
-          state.loggedin = false
-        end
         if result and result.stop_with_error == true then
           return nil, message, info
         end
@@ -544,19 +469,11 @@ function Http.new(state, baseURL)
           local value, errorMessage = onerror[tostring(info.status)]()
           return value, errorMessage, info
         end
-        if info.status == 401 and authRetries < 3 then
-          authRetries = authRetries + 1
-          if result and result.auth_method == "basic:password+otp" then
-            state.otpEnabled = true
-            if not promptOTP(state) then
-              return nil, message, info
-            end
-          elseif wasLoggedIn then
-            state.otpEnabled, state.otp = false, nil
-          else
-            state.otpEnabled, state.otp = false, nil
-            return nil, message, info
-          end
+        if info.status == 401 and authRetries < 1 then
+          authRetries, rejected = authRetries + 1, token
+        elseif info.status == 401 then
+          auth.reject(token)
+          return nil, LOC("$$$/PhotoDeck/OAuth/ReconnectRequired=Please reconnect to PhotoDeck in the publish service settings"), info
         elseif info.status == 429 and retries < 3 then
           retries = retries + 1
         elseif method == "GET" and (info.status == 0 or info.status >= 500) and retries < 3 then
@@ -580,7 +497,7 @@ function Http.new(state, baseURL)
       return nil, LOC("$$$/PhotoDeck/API/Media/UploadURLMissing=Upload URL missing"), false
     end
     for attempt = 1, 4 do
-      -- Never forward API headers, Basic credentials or session cookies to storage.
+      -- Never forward bearer credentials or API headers to storage.
       -- No Authorization header at all: storage authorizes through the opaque
       -- signed URL/form. Even an empty header can interfere with that scheme.
       local headers = { { field = "Cookie", value = "" } }
