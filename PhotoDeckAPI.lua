@@ -1,3 +1,4 @@
+local LrApplication = import("LrApplication")
 local LrDate = import("LrDate")
 local LrFileUtils = import("LrFileUtils")
 local LrHttp = import("LrHttp")
@@ -30,7 +31,9 @@ local defaultContext = { cache = { values = {}, pending = {} }, failedUploadLoca
 local function currentContext()
   return taskContexts[coroutine.running()] or defaultContext
 end
-local http = PhotoDeckHttp.new(function() return currentContext().connection end, PhotoDeckAPI_BASEURL)
+local http = PhotoDeckHttp.new(function()
+  return currentContext().connection
+end, PhotoDeckAPI_BASEURL)
 
 -- All calls must run in an LrTask. The third result carries status and Link headers.
 function PhotoDeckAPI.request(...)
@@ -1028,6 +1031,7 @@ function PhotoDeckAPI.subGalleriesInGallery(urlname, galleryId, matchingName, ig
 end
 
 local function buildMediaMetadataParams(photo, updating)
+  local version = LrApplication.versionTable()
   local params = {}
   local title = photo:getFormattedMetadata("headline")
   if not title or title == "" then
@@ -1035,6 +1039,14 @@ local function buildMediaMetadataParams(photo, updating)
   end
   params.title = title
   params.description = photo:getFormattedMetadata("caption")
+  -- The dedicated IPTC accessibility field was added in Lightroom Classic 13.2.
+  -- Do not clear an existing PhotoDeck value when Lightroom has no alt text.
+  if version.major > 13 or (version.major == 13 and version.minor >= 2) then
+    local altText = photo:getRawMetadata("altTextAccessibility")
+    if altText and altText ~= "" then
+      params.alt_text = altText
+    end
+  end
   params.keywords = photo:getFormattedMetadata("keywordTagsForExport")
   params.location = photo:getFormattedMetadata("location")
   params.city = photo:getFormattedMetadata("city")

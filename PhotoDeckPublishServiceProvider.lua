@@ -35,6 +35,7 @@ publishServiceProvider.metadataThatTriggersRepublish = function(publishSettings)
       rating = true,
       title = true,
       caption = true,
+      altTextAccessibility = true,
       creator = true,
       keywords = true,
       dateCreated = true,

@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## 0.20.2
+
+- Map Lightroom altTextAccessibility field to PhotoDeck media metadata.
+
 ## 0.20.1
 
 - Migrate to the new PhotoDeck OAuth authentication flow.

@@ -307,6 +307,7 @@ local function reset()
       }
     end,
     LrApplication = {
+      versionTable = function() return { major = 13, minor = 2 } end,
       activeCatalog = function()
         return env.catalog
       end,
@@ -2028,6 +2029,9 @@ test("metadata-only republish combines publication and all metadata in one PUT",
     return metadata[key]
   end
   function photo:getRawMetadata(key)
+    if key == "altTextAccessibility" then
+      return "A photo description for accessibility"
+    end
     if key == "dateTimeOriginalISO8601" then
       return "2026-10-15T12:00:00Z"
     end
@@ -2039,6 +2043,7 @@ test("metadata-only republish combines publication and all metadata in one PUT",
   for name, expected in pairs({
     title = "Title",
     description = "Caption",
+    alt_text = "A photo description for accessibility",
     keywords = "one, two",
     location = "Place",
     city = "City",
@@ -2056,6 +2061,41 @@ test("metadata-only republish combines publication and all metadata in one PUT",
   equal(media.content, nil)
   equal(media.artist_rating, nil)
   equal(#env.calls, 1)
+end)
+
+test("empty or unavailable Lightroom alt text preserves PhotoDeck alt text", function()
+  local photo = {
+    getFormattedMetadata = function() return nil end,
+    getRawMetadata = function(_, key)
+      if key == "altTextAccessibility" then return "" end
+    end,
+  }
+  enqueue(response(200, '{"uuid":"m"}'))
+  assert(env.api.updatePhoto("m", "site", { injectMetadata = true, lrPhoto = photo }))
+  equal(payload(env.calls[1]).media.alt_text, nil)
+  photo.getRawMetadata = function() return nil end
+  enqueue(response(200, '{"uuid":"m"}'))
+  assert(env.api.updatePhoto("m", "site", { injectMetadata = true, lrPhoto = photo }))
+  equal(payload(env.calls[2]).media.alt_text, nil)
+end)
+
+test("older Lightroom versions do not request alt text metadata", function()
+  env.modules.LrApplication.versionTable = function() return { major = 13, minor = 1 } end
+  local photo = {
+    getFormattedMetadata = function() return nil end,
+    getRawMetadata = function(_, key)
+      assert(key ~= "altTextAccessibility", "Alt text is unsupported in this version")
+    end,
+  }
+  enqueue(response(200, '{"uuid":"m"}'))
+  assert(env.api.updatePhoto("m", "site", { injectMetadata = true, lrPhoto = photo }))
+  equal(payload(env.calls[1]).media.alt_text, nil)
+end)
+
+test("alt text republish trigger respects metadata update setting", function()
+  local provider = require("PhotoDeckPublishServiceProvider")
+  equal(provider.metadataThatTriggersRepublish({}).altTextAccessibility, true)
+  equal(provider.metadataThatTriggersRepublish({ updateMetadataOnRepublish = false }).altTextAccessibility, nil)
 end)
 
 test("Lightroom rating strings are sent as JSON numbers", function()
