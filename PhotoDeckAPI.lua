@@ -1000,7 +1000,15 @@ end
 
 function PhotoDeckAPI.photosInGallery(urlname, galleryId)
   log_trace(string.format('PhotoDeckAPI.photosInGallery("%s", "%s")', urlname, galleryId))
-  return requestList(galleryPath(urlname, galleryId), { include = "media_uuids", per_page = 1000 }, nil, nil, "media_uuids")
+  local medias, errorMessage = requestList("/medias.json", { gallery_uuid = galleryId, per_page = 1000 })
+  if not medias then
+    return nil, errorMessage
+  end
+  local uuids = {}
+  for uuid in pairs(medias) do
+    uuids[uuid] = uuid
+  end
+  return uuids
 end
 
 function PhotoDeckAPI.subGalleriesInGallery(urlname, galleryId, matchingName, ignore_not_found)

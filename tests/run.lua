@@ -1789,17 +1789,24 @@ test("tree pages need not repeat ancestors and only direct children are returned
   equal(galleries.child.name, "Café")
 end)
 
-test("included gallery media UUIDs paginate and deduplicate", function()
+test("gallery-scoped media paginate and deduplicate UUIDs", function()
   enqueue(
     response(
       200,
-      '{"uuid":"g","media_uuids":["one","two"]}',
-      { { field = "Link", value = '</websites/site/galleries/g.json?include=media_uuids&page=2>; rel="next"' } }
+      '[{"uuid":"one"},{"uuid":"two"}]',
+      { { field = "Link", value = '</medias.json?gallery_uuid=g&page=2>; rel="next"' } }
     ),
-    response(200, '{"uuid":"g","media_uuids":["two","three"]}')
+    response(200, '[{"uuid":"two"},{"uuid":"three"}]')
   )
-  equal(count(assert(env.api.photosInGallery("site", "g"))), 3)
+  local uuids = assert(env.api.photosInGallery("site", "g"))
+  equal(count(uuids), 3)
+  equal(uuids.one, "one")
+  equal(uuids.two, "two")
+  equal(uuids.three, "three")
   equal(#env.calls, 2)
+  equal(env.calls[1].method, "GET")
+  equal(env.calls[1].url, apiOrigin .. "/medias.json?gallery_uuid=g&per_page=1000")
+  equal(env.calls[2].url, apiOrigin .. "/medias.json?gallery_uuid=g&page=2")
 end)
 
 section("Galleries and Lightroom collections")
