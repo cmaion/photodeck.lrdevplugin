@@ -1072,7 +1072,7 @@ local function buildMediaMetadataParams(photo, updating)
   else
     params.artist_rating = artist_rating
   end
-  params.date_created = photo:getRawMetadata("dateTimeOriginalISO8601")
+  params.original_created_at = photo:getRawMetadata("dateTimeOriginalISO8601")
   return params
 end
 

@@ -2060,7 +2060,7 @@ test("metadata-only republish combines publication and all metadata in one PUT",
     copyright = "Copyright",
     region = "Region",
     delete_artist_rating = true,
-    date_created = "2026-10-15T12:00:00Z",
+    original_created_at = "2026-10-15T12:00:00Z",
   }) do
     equal(media[name], expected, "media." .. name)
   end

@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## Unreleased
+
+- Minor PhotoDeck related API updates
+
 ## 0.20.2
 
 - Map Lightroom altTextAccessibility field to PhotoDeck media metadata.
