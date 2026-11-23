@@ -1,6 +1,6 @@
 # CHANGELOG
 
-## Unreleased
+## 0.20.3
 
 - Align the API implementation with PhotoDeck API documentation v1.6.1.
 
