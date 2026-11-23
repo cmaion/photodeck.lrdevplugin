@@ -126,7 +126,7 @@ local function galleryPath(urlname, galleryId)
 end
 
 local function galleryURL(website, gallery)
-  return website.home_url:gsub("/+$", "") .. "/-/" .. gallery.full_url_path:gsub("^/+", "")
+  return website.url:gsub("/+$", "") .. "/" .. gallery.website_path:gsub("^/+", "")
 end
 
 function PhotoDeckAPI.connect(settings)
@@ -212,7 +212,7 @@ function PhotoDeckAPI.website(urlname, details)
   if details or currentContext().cache.values["website/" .. urlname] then
     return cached("website/" .. urlname, function()
       local result, message = requestObject("GET", "/websites/" .. PhotoDeckHttp.encode(urlname) .. ".json")
-      if result and (type(result.uuid) ~= "string" or type(result.home_url) ~= "string") then
+      if result and (type(result.uuid) ~= "string" or type(result.url) ~= "string") then
         return nil, invalidResponse()
       end
       return result, message
@@ -408,18 +408,14 @@ function PhotoDeckAPI.createOrUpdateGallery(urlname, collectionInfo, updateSetti
           parentJustCreated = false
         end
         local parentCollection = collection.catalog:getPublishedCollectionByLocalIdentifier(parent.localCollectionId)
-        parentGallery.full_url = galleryURL(website, parentGallery)
+        parentGallery.url = galleryURL(website, parentGallery)
         if
           parentCollection
-          and (
-            not parent.remoteCollectionId
-            or parentCollection:getRemoteId() ~= parentGallery.uuid
-            or parentCollection:getRemoteUrl() ~= parentGallery.full_url
-          )
+          and (not parent.remoteCollectionId or parentCollection:getRemoteId() ~= parentGallery.uuid or parentCollection:getRemoteUrl() ~= parentGallery.url)
         then
           parentCollection.catalog:withWriteAccessDo("Set Parent Remote Id and Url", function()
             parentCollection:setRemoteId(parentGallery.uuid)
-            parentCollection:setRemoteUrl(parentGallery.full_url)
+            parentCollection:setRemoteUrl(parentGallery.url)
           end)
         end
 
@@ -499,11 +495,11 @@ function PhotoDeckAPI.createOrUpdateGallery(urlname, collectionInfo, updateSetti
   if error_msg then
     return gallery, error_msg
   end
-  gallery.full_url = galleryURL(website, gallery)
-  if collection:getRemoteId() == nil or collection:getRemoteId() ~= gallery.uuid or collection:getRemoteUrl() ~= gallery.full_url then
+  gallery.url = galleryURL(website, gallery)
+  if collection:getRemoteId() == nil or collection:getRemoteId() ~= gallery.uuid or collection:getRemoteUrl() ~= gallery.url then
     collection.catalog:withWriteAccessDo("Set Remote Id and Url", function()
       collection:setRemoteId(gallery.uuid)
-      collection:setRemoteUrl(gallery.full_url)
+      collection:setRemoteUrl(gallery.url)
     end)
   end
   return gallery
@@ -545,11 +541,7 @@ function PhotoDeckAPI.synchronizeGalleries(urlname, publishService, progressScop
 
   local photodeckGalleriesByParent = {}
   for uuid, gallery in pairs(photodeckGalleries) do
-    if
-      type(gallery.name) ~= "string"
-      or type(gallery.full_url_path) ~= "string"
-      or (gallery.medias_count ~= nil and type(gallery.medias_count) ~= "number")
-    then
+    if type(gallery.name) ~= "string" or type(gallery.website_path) ~= "string" or (gallery.medias_count ~= nil and type(gallery.medias_count) ~= "number") then
       PhotoDeckAPI.canSynchronize = true
       return nil, invalidResponse()
     end
@@ -581,7 +573,7 @@ function PhotoDeckAPI.synchronizeGalleries(urlname, publishService, progressScop
     local lrCollections = parentLRCollectionSet:getChildCollections()
 
     for uuid, gallery in pairs(pdGalleries) do
-      gallery.full_url = galleryURL(website, gallery)
+      gallery.url = galleryURL(website, gallery)
     end
 
     -- Scan Lightroom published collections, and connect them to PhotoDeck galleries
@@ -597,7 +589,7 @@ function PhotoDeckAPI.synchronizeGalleries(urlname, publishService, progressScop
             local collectionSettings = lrCollection:getCollectionInfoSummary().collectionSettings or {}
             catalog:withWriteAccessDo("Resynchronize LR collection settings", function()
               lrCollection:setRemoteId(uuid)
-              lrCollection:setRemoteUrl(gallery.full_url)
+              lrCollection:setRemoteUrl(gallery.url)
               lrCollection:setCollectionSettings(collectionSettings)
             end)
             updateCount = updateCount + 1
@@ -675,7 +667,7 @@ function PhotoDeckAPI.synchronizeGalleries(urlname, publishService, progressScop
             local collectionSettings = lrCollectionSet:getCollectionSetInfoSummary().collectionSettings or {}
             catalog:withWriteAccessDo("Resynchronize LR collection settings", function()
               lrCollectionSet:setRemoteId(uuid)
-              lrCollectionSet:setRemoteUrl(gallery.full_url)
+              lrCollectionSet:setRemoteUrl(gallery.url)
               lrCollectionSet:setCollectionSetSettings(collectionSettings)
             end)
             updateCount = updateCount + 1
@@ -836,7 +828,7 @@ function PhotoDeckAPI.synchronizeGalleries(urlname, publishService, progressScop
       if lrCollectionSet then
         -- Already properly connected, good
         local collectionSettings = lrCollectionSet:getCollectionSetInfoSummary().collectionSettings or {}
-        if lrCollectionSet:getRemoteUrl() ~= gallery.full_url then
+        if lrCollectionSet:getRemoteUrl() ~= gallery.url then
           log_trace(
             string.format(
               "SYNC: PhotoDeck gallery %s '%s' already connected to Lightroom Published Collection Set %i. Updating.",
@@ -846,7 +838,7 @@ function PhotoDeckAPI.synchronizeGalleries(urlname, publishService, progressScop
             )
           )
           catalog:withWriteAccessDo("Resynchronize LR collection settings", function()
-            lrCollectionSet:setRemoteUrl(gallery.full_url)
+            lrCollectionSet:setRemoteUrl(gallery.url)
             lrCollectionSet:setCollectionSetSettings(collectionSettings)
           end)
           updateCount = updateCount + 1
@@ -863,7 +855,7 @@ function PhotoDeckAPI.synchronizeGalleries(urlname, publishService, progressScop
       elseif lrCollection then
         -- Already properly connected, good
         local collectionSettings = lrCollection:getCollectionInfoSummary().collectionSettings or {}
-        if lrCollection:getRemoteUrl() ~= gallery.full_url then
+        if lrCollection:getRemoteUrl() ~= gallery.url then
           log_trace(
             string.format(
               "SYNC: PhotoDeck gallery %s '%s' already connected to Lightroom Published Collection %i. Updating.",
@@ -873,7 +865,7 @@ function PhotoDeckAPI.synchronizeGalleries(urlname, publishService, progressScop
             )
           )
           catalog:withWriteAccessDo("Resynchronize LR collection settings", function()
-            lrCollection:setRemoteUrl(gallery.full_url)
+            lrCollection:setRemoteUrl(gallery.url)
             lrCollection:setCollectionSettings(collectionSettings)
           end)
           updateCount = updateCount + 1
@@ -915,7 +907,7 @@ function PhotoDeckAPI.synchronizeGalleries(urlname, publishService, progressScop
             local collectionSettings = {}
             catalog:withWriteAccessDo("Set LR collection settings", function()
               lrCollectionSet:setRemoteId(uuid)
-              lrCollectionSet:setRemoteUrl(gallery.full_url)
+              lrCollectionSet:setRemoteUrl(gallery.url)
               lrCollectionSet:setCollectionSetSettings(collectionSettings)
             end)
             createCount = createCount + 1
@@ -938,7 +930,7 @@ function PhotoDeckAPI.synchronizeGalleries(urlname, publishService, progressScop
             local collectionSettings = {}
             catalog:withWriteAccessDo("Set LR collection settings", function()
               lrCollection:setRemoteId(uuid)
-              lrCollection:setRemoteUrl(gallery.full_url)
+              lrCollection:setRemoteUrl(gallery.url)
               lrCollection:setCollectionSettings(collectionSettings)
             end)
             createCount = createCount + 1
@@ -957,7 +949,7 @@ function PhotoDeckAPI.synchronizeGalleries(urlname, publishService, progressScop
             local collectionSettings = {}
             catalog:withWriteAccessDo("Set LR collection settings", function()
               lrCollection:setRemoteId(uuid)
-              lrCollection:setRemoteUrl(gallery.full_url)
+              lrCollection:setRemoteUrl(gallery.url)
               lrCollection:setCollectionSettings(collectionSettings)
             end)
             createCount = createCount + 1

@@ -53,16 +53,13 @@ end
 local function response(status, body, headers, contentType)
   return { status = status, body = body, headers = headers or {}, contentType = contentType or "application/json; charset=utf-8" }
 end
-local function rateHeaders(limit, remaining, reset)
+local function rateHeaders(limit, remaining, reset, window)
   local headers = {}
   if limit ~= nil then
-    headers[#headers + 1] = { field = "RateLimit-Limit", value = tostring(limit) }
+    headers[#headers + 1] = { field = "RateLimit-Policy", value = '"requests";q=' .. limit .. (window and (';w=' .. window) or "") }
   end
   if remaining ~= nil then
-    headers[#headers + 1] = { field = "RateLimit-Remaining", value = tostring(remaining) }
-  end
-  if reset ~= nil then
-    headers[#headers + 1] = { field = "RateLimit-Reset", value = tostring(reset) }
+    headers[#headers + 1] = { field = "RateLimit", value = '"requests";r=' .. remaining .. (reset and (';t=' .. reset) or "") }
   end
   return headers
 end
@@ -599,6 +596,14 @@ test("connection checks use the bearer-authenticated user profile", function()
   equal(env.api.loggedin, true)
   equal(header(env.calls[1], "Authorization"), "Bearer test-access")
 end)
+
+for _, accountHolder in ipairs({ true, false }) do
+  test("profile preserves account_holder=" .. tostring(accountHolder), function()
+    enqueue(response(200, '{"email":"user@example.com","account_holder":' .. tostring(accountHolder) .. '}'))
+    equal(assert(env.api.whoami()).account_holder, accountHolder)
+    equal(env.api.loggedin, true)
+  end)
+end
 
 test("browser authorization uses S256, state, issuer validation and form-encoded code exchange", function()
   local oauth = require("PhotoDeckOAuth")
@@ -1280,7 +1285,7 @@ test("a new service completes browser authorization across Lightroom-style prote
   end
   enqueue(
     tokenResponse(),
-    response(200, '{"email":"user@example.com","firstname":"Test","lastname":"User"}', rateHeaders(60, 60, 60)),
+    response(200, '{"email":"user@example.com","firstname":"Test","lastname":"User"}', rateHeaders(60, 60, 60, 60)),
     response(200, '[{"uuid":"w","urlname":"site","title":"Site","hostname":"example.com"}]'),
     response(200, '[{"uuid":"a","name":"Library"}]'),
     response(200, "[]")
@@ -1405,18 +1410,6 @@ end)
 
 section("Rate limiting")
 
-test("429 honors Retry-After even when longer than two minutes", function()
-  enqueue(response(429, '{"error":"Wait"}', { { field = "Retry-After", value = "180" } }), response(200, "[]"))
-  assert(env.api.galleries("site"))
-  assert(env.calls[2].time - env.calls[1].time >= 180)
-end)
-
-test("Retry-After supports HTTP dates", function()
-  enqueue(response(429, '{"error":"Wait"}', { { field = "Retry-After", value = "Mon, 01 Jan 2001 00:05:00 GMT" } }), response(200, "[]"))
-  assert(env.api.galleries("site"))
-  equal(env.calls[2].time, 300)
-end)
-
 for _, case in ipairs({
   { name = "seconds", value = "180", delay = 180 },
   { name = "HTTP dates", value = "Mon, 01 Jan 2001 00:05:00 GMT", delay = 300 },
@@ -1439,11 +1432,7 @@ test("default API throttle is one request per second; headers can permit faster"
   local client = httpClient()
   enqueue(
     response(200, "[]"),
-    response(200, "[]", {
-      { field = "RateLimit-Limit", value = "100" },
-      { field = "RateLimit-Remaining", value = "99" },
-      { field = "RateLimit-Reset", value = "1" },
-    }),
+    response(200, "[]", rateHeaders(100, 99, 1, 1)),
     response(200, "[]")
   )
   assert(client.request("GET", "/artists.json"))
@@ -1456,7 +1445,7 @@ end)
 test("traffic smoothing scales with quota utilization and the full policy window", function()
   local client = httpClient()
   for _, remaining in ipairs({ 54, 30, 6 }) do
-    enqueue(response(200, "[]", rateHeaders("60, 5;w=1, 60;w=60", remaining, 1)))
+    enqueue(response(200, "[]", rateHeaders(60, remaining, 1, 60)))
   end
   enqueue(response(200, "[]"))
   for _ = 1, 4 do
@@ -1468,11 +1457,14 @@ test("traffic smoothing scales with quota utilization and the full policy window
   assert(env.calls[4].time - env.calls[3].time > 20)
 end)
 
-test("multi-policy headers use the longest window whose quota fits the capacity", function()
+test("multi-policy headers smooth only the named requests policy", function()
   local client = httpClient()
   enqueue(
-    response(200, "[]", rateHeaders("60,5; w=1,60;w=60,120;w=3600", 6, 1)),
-    response(200, "[]", rateHeaders("100, 100;w=300, 999;w=1200", 20, 1)),
+    response(200, "[]", {
+      { field = "RateLimit-Policy", value = '"media_storage";q=100;qu="content-bytes", "requests";q=60;w=60, "microjobs";q=1000' },
+      { field = "RateLimit", value = '"microjobs";r=0;t=86400, "requests";r=6;t=1, "media_storage";r=0' },
+    }),
+    response(200, "[]", rateHeaders(100, 20, 1, 300)),
     response(200, "[]")
   )
   for _ = 1, 3 do
@@ -1484,7 +1476,7 @@ end)
 
 test("cached quota information supports partial and missing rate-limit headers", function()
   local client = httpClient()
-  enqueue(response(200, "[]", rateHeaders("60,60;w=60", 6, 15)), response(200, "[]", rateHeaders(nil, 6, nil)), response(200, "[]"), response(200, "[]"))
+  enqueue(response(200, "[]", rateHeaders(60, 6, 15, 60)), response(200, "[]", rateHeaders(nil, 6, nil)), response(200, "[]"), response(200, "[]"))
   for _ = 1, 4 do
     assert(client.request("GET", "/artists.json"))
   end
@@ -1493,22 +1485,9 @@ test("cached quota information supports partial and missing rate-limit headers",
   end
 end)
 
-test("shared-quota consumption by other clients increases Lightroom's spacing", function()
-  local client = httpClient()
-  for _, remaining in ipairs({ 59, 12, 3 }) do
-    enqueue(response(200, "[]", rateHeaders("60,60;w=60", remaining, 1)))
-  end
-  enqueue(response(200, "[]"))
-  for _ = 1, 4 do
-    assert(client.request("GET", "/artists.json"))
-  end
-  near(env.calls[3].time - env.calls[2].time, 60 * 0.8 ^ 10)
-  near(env.calls[4].time - env.calls[3].time, 60 * 0.95 ^ 10)
-end)
-
 test("an exhausted quota blocks requests until reset, including after token refresh", function()
   local client = httpClient()
-  enqueue(response(200, "[]", rateHeaders("60,60;w=60", 0, 45)), response(200, "[]"))
+  enqueue(response(200, "[]", rateHeaders(60, 0, 45, 60)), response(200, "[]"))
   assert(client.request("GET", "/artists.json"))
   table.insert(env.responses, 1, tokenResponse())
   equal(env.auth.getAccessToken("test-access"), "new-access")
@@ -1518,21 +1497,96 @@ end)
 
 test("zero capacity waits for the policy window without dividing by zero", function()
   local client = httpClient()
-  enqueue(response(200, "[]", rateHeaders("0,0;w=30", 1, 5)), response(200, "[]"))
+  enqueue(response(200, "[]", rateHeaders(0, 1, 5, 30)), response(200, "[]"))
   assert(client.request("GET", "/artists.json"))
   assert(client.request("GET", "/artists.json"))
   near(env.calls[2].time, 30)
 end)
 
-test("API network failures leave a reset window of silence before retrying", function()
+test("repeated structured headers handle quoted delimiters and escaped strings", function()
   local client = httpClient()
-  enqueue(response(0, nil, rateHeaders(nil, nil, 20)), response(200, "[]"))
+  enqueue(response(200, "[]", {
+    { field = "RateLimit-Policy", value = '"other,policy";q=1;w=999;note="a; b, c\\\"d"' },
+    { field = "RateLimit-Policy", value = '"requests"; q=100;w=30;pk=:YWJjZA==:' },
+    { field = "RateLimit", value = '"other,policy";r=0;t=999' },
+    { field = "rAtElImIt", value = '"requests";t=60;r=10' },
+  }), response(200, "[]"))
   assert(client.request("GET", "/artists.json"))
-  near(env.calls[2].time, 20)
+  assert(client.request("GET", "/artists.json"))
+  near(env.calls[2].time, 30 * 0.9 ^ 10)
+end)
+
+test("usage quotas and omitted requests policies preserve existing pacing", function()
+  local client = httpClient()
+  enqueue(response(200, "[]", rateHeaders(100, 10, 60, 30)), response(200, "[]", {
+    { field = "RateLimit-Policy", value = '"microjobs";q=1000, "media_storage";q=10000;qu="content-bytes"' },
+    { field = "RateLimit", value = '"microjobs";r=0;t=86400, "media_storage";r=0' },
+  }), response(200, "[]"))
+  for _ = 1, 3 do assert(client.request("GET", "/artists.json")) end
+  near(env.calls[2].time, 30 * 0.9 ^ 10)
+  near(env.calls[3].time - env.calls[2].time, 30 * 0.9 ^ 10)
+end)
+
+for _, value in ipairs({ '"requests";r=-1;t=99', '"requests";r="0";t=99', '"requests";r=0.5;t=99',
+  '"requests";r=0;t=99junk', '"requests";r=0;t=99,', 'requests;r=0;t=99', '"requests";r=0;t=99;note="unterminated' }) do
+  test("malformed rate-limit fields are ignored: " .. value, function()
+    local client = httpClient()
+    enqueue(response(200, "[]", { { field = "RateLimit", value = value } }), response(200, "[]"))
+    assert(client.request("GET", "/artists.json"))
+    assert(client.request("GET", "/artists.json"))
+    near(env.calls[2].time, 1)
+  end)
+end
+
+test("exhaustion honors the effective window even without a policy header", function()
+  local client = httpClient()
+  enqueue(response(200, "[]", rateHeaders(nil, 0, 45)), response(200, "[]"))
+  assert(client.request("GET", "/artists.json"))
+  assert(client.request("GET", "/artists.json"))
+  near(env.calls[2].time, 45)
+end)
+
+test("Retry-After takes precedence over the current effective window", function()
+  local client = httpClient()
+  local headers = rateHeaders(60, 0, 120, 60)
+  headers[#headers + 1] = { field = "Retry-After", value = "10" }
+  enqueue(response(429, "{}", headers), response(200, "[]"))
+  assert(client.request("GET", "/artists.json"))
+  near(env.calls[2].time, 10)
+end)
+
+test("429 without a valid Retry-After uses bounded exponential backoff with jitter", function()
+  local client = httpClient()
+  for _ = 1, 4 do
+    enqueue(response(429, "{}", { { field = "Retry-After", value = "invalid" } }))
+  end
+  local result = client.request("GET", "/artists.json")
+  equal(result, nil)
+  equal(#env.calls, 4)
+  for index = 2, 4 do
+    local delay = env.calls[index].time - env.calls[index - 1].time
+    assert(delay >= 2 ^ (index - 1) and delay <= 2 ^ (index - 1) + 1)
+  end
+end)
+
+test("API network failures retry with exponential backoff and jitter", function()
+  local client = httpClient()
+  enqueue(response(0, nil), response(0, nil), response(200, "[]"))
+  assert(client.request("GET", "/artists.json"))
+  assert(env.calls[2].time >= 2 and env.calls[2].time <= 3)
+  assert(env.calls[3].time - env.calls[2].time >= 4 and env.calls[3].time - env.calls[2].time <= 5)
+end)
+
+test("handled throttling still delays unrelated API work", function()
+  local client = httpClient()
+  enqueue(response(429, "{}"), response(200, "[]"))
+  client.request("GET", "/artists.json", nil, { ["429"] = function() return nil, "Wait" end })
+  assert(client.request("GET", "/artists.json"))
+  assert(env.calls[2].time >= 2 and env.calls[2].time <= 3)
 end)
 
 test("successful media updates maintain a minimum quarter-second pause", function()
-  enqueue(response(200, '{"uuid":"m"}', rateHeaders("60,60;w=60", 59, 1)), response(200, '{"uuid":"m"}'))
+  enqueue(response(200, '{"uuid":"m"}', rateHeaders(60, 59, 1, 60)), response(200, '{"uuid":"m"}'))
   assert(env.api.updatePhoto("m", "site", {}))
   assert(env.api.updatePhoto("m", "site", {}))
   near(env.calls[2].time - env.calls[1].time, 0.25)
@@ -1541,14 +1595,14 @@ end)
 test("responses from concurrent requests cannot shorten a Retry-After block", function()
   cooperativeTasks()
   local client = httpClient()
-  local slow = response(200, "[]", rateHeaders("60,60;w=60", 60, 0))
+  local slow = response(200, "[]", rateHeaders(60, 60, 0, 60))
   slow.inspect = function()
     coroutine.yield("receiving")
   end
   enqueue(
     slow,
     response(429, '{"error":"Wait"}', { { field = "Retry-After", value = "60" } }),
-    response(200, "[]", rateHeaders("60,60;w=60", 60, 1)),
+    response(200, "[]", rateHeaders(60, 60, 1, 60)),
     response(200, "[]")
   )
   local function request()
@@ -1689,16 +1743,17 @@ test("website structural details are lazy and cached", function()
   equal(assert(env.api.website("site")).uuid, "w")
   equal(#env.calls, 1)
   equal(assert(env.api.website("site")).home_url, nil)
-  enqueue(response(200, '{"uuid":"w","urlname":"site","root_gallery_uuid":"root","home_url":"https://example.com/fr"}'))
+  enqueue(response(200, '{"uuid":"w","urlname":"site","root_gallery_uuid":"root","url":"https://example.com/fr","home_url":"https://external.example.com"}'))
   equal(assert(env.api.website("site", true)).root_gallery_uuid, "root")
-  equal(assert(env.api.website("site", true)).home_url, "https://example.com/fr")
+  equal(assert(env.api.website("site", true)).url, "https://example.com/fr")
+  equal(assert(env.api.website("site", true)).home_url, "https://external.example.com")
   equal(assert(env.api.website("site")).uuid, "w")
   equal(#env.calls, 2)
 end)
 
 test("concurrent first use of website details shares one request", function()
   cooperativeTasks()
-  local item = response(200, '{"uuid":"w","home_url":"https://example.com","root_gallery_uuid":"root"}')
+  local item = response(200, '{"uuid":"w","url":"https://example.com","root_gallery_uuid":"root"}')
   item.inspect = function()
     coroutine.yield("receiving")
   end
@@ -1725,11 +1780,11 @@ test("cache reset during a load does not cache resources from the previous accou
   local json = require("PhotoDeckJSON")
   env.vault["oauth2:" .. json.encode({ oauthOrigin, apiOrigin, "test-client", "other-connection" })] =
     json.encode({ access_token = "other-access", refresh_token = "other-refresh", expires_at = 86400 })
-  local item = response(200, '{"uuid":"old-site","home_url":"https://old.example.com"}')
+  local item = response(200, '{"uuid":"old-site","url":"https://old.example.com"}')
   item.inspect = function()
     env.api.connect({ oauthClientId = "test-client", oauthConnectionId = "other-connection" })
   end
-  enqueue(item, response(200, '{"uuid":"new-site","home_url":"https://new.example.com"}'))
+  enqueue(item, response(200, '{"uuid":"new-site","url":"https://new.example.com"}'))
   equal(assert(env.api.website("site", true)).uuid, "old-site")
   equal(assert(env.api.website("site", true)).uuid, "new-site")
   equal(assert(env.api.website("site", true)).uuid, "new-site")
@@ -1741,9 +1796,9 @@ test("concurrent services keep bearer tokens and cached resources isolated acros
   local json = require("PhotoDeckJSON")
   env.vault["oauth2:" .. json.encode({ oauthOrigin, apiOrigin, "test-client", "other-connection" })] =
     json.encode({ access_token = "other-access", refresh_token = "other-refresh", expires_at = 86400 })
-  local item = response(200, '{"uuid":"first-site","home_url":"https://first.example.com"}')
+  local item = response(200, '{"uuid":"first-site","url":"https://first.example.com"}')
   item.inspect = function() coroutine.yield("receiving") end
-  enqueue(item, response(200, '{"uuid":"second-site","home_url":"https://second.example.com"}'))
+  enqueue(item, response(200, '{"uuid":"second-site","url":"https://second.example.com"}'))
   local first = coroutine.create(function()
     env.api.connect(env.settings)
     equal(assert(env.api.website("site", true)).uuid, "first-site")
@@ -1898,10 +1953,10 @@ local function catalogService()
 end
 local function structureResponses()
   enqueue(
-    response(200, '{"uuid":"w","urlname":"site","root_gallery_uuid":"root","home_url":"https://example.com/fr/"}'),
+    response(200, '{"uuid":"w","urlname":"site","root_gallery_uuid":"root","url":"https://example.com/fr/","home_url":"https://external.example.com"}'),
     response(
       200,
-      '[{"uuid":"root","name":"Root","parent_uuid":null,"full_url_path":"","medias_count":0},{"uuid":"folder","name":"Folder","parent_uuid":"root","full_url_path":"folder","medias_count":0},{"uuid":"leaf","name":"Leaf","parent_uuid":"folder","full_url_path":"folder/leaf","medias_count":1}]'
+      '[{"uuid":"root","name":"Root","parent_uuid":null,"slug":"","slug_path":"","website_path":"/-/","medias_count":0},{"uuid":"folder","name":"Folder","parent_uuid":"root","slug":"folder","slug_path":"folder","website_path":"/-/folder","medias_count":0},{"uuid":"leaf","name":"Leaf","parent_uuid":"folder","slug":"leaf","slug_path":"folder/leaf","website_path":"/-/folder/leaf","medias_count":1}]'
     )
   )
 end
@@ -1935,9 +1990,38 @@ test("structural synchronization preserves existing descriptions and styles", fu
   equal(folder.settings.description, "Cached folder introduction")
   equal(leaf.settings.display_style, "leaf-style")
   equal(#env.calls, 2)
-  enqueue(response(200, '[{"uuid":"root","name":"Root","parent_uuid":null,"full_url_path":"","medias_count":0}]'))
+  enqueue(response(200, '[{"uuid":"root","name":"Root","parent_uuid":null,"website_path":"/-/","medias_count":0}]'))
   assert(env.api.synchronizeGalleries("site", service, progress))
   equal(#env.calls, 3) -- website details are reused
+end)
+
+test("gallery creation uses the hosted URL and returned website path", function()
+  local service = catalogService()
+  local collection = service:createPublishedCollection("Name", service)
+  enqueue(
+    response(200, '{"uuid":"w","root_gallery_uuid":"root","url":"https://hosted.example.com/fr/","home_url":"https://external.example.com"}'),
+    response(200, "[]"),
+    response(201, '{"uuid":"g","name":"Name","parent_uuid":"root","slug":"name","slug_path":"name","website_path":"/-/name"}')
+  )
+  local gallery = assert(env.api.createOrUpdateGallery("site", { name = "Name", parents = {}, publishedCollection = collection }))
+  equal(gallery.url, "https://hosted.example.com/fr/-/name")
+  equal(collection.url, gallery.url)
+  equal(collection.id, "g")
+end)
+
+test("gallery synchronization rejects missing canonical paths before changing collections", function()
+  local service = catalogService()
+  local existing = service:createPublishedCollection("Existing", service)
+  existing.id = "existing"
+  enqueue(
+    response(200, '{"uuid":"w","root_gallery_uuid":"root","url":"https://example.com"}'),
+    response(200, '[{"uuid":"root","name":"Root","website_path":"/-/"},{"uuid":"g","name":"Name","parent_uuid":"root","website_path":null}]')
+  )
+  local result, message = env.api.synchronizeGalleries("site", service, progress)
+  equal(result, nil)
+  equal(message, "Invalid response from PhotoDeck")
+  equal(existing.deleted, nil)
+  equal(env.api.canSynchronize, true)
 end)
 
 test("explicit gallery editing can clear the introduction", function()
@@ -1945,9 +2029,9 @@ test("explicit gallery editing can clear the introduction", function()
   local collection = service:createPublishedCollection("Name", service)
   collection.id = "g"
   enqueue(
-    response(200, '{"uuid":"w","root_gallery_uuid":"root","home_url":"https://example.com"}'),
-    response(200, '{"uuid":"g","name":"Name","parent_uuid":"root","full_url_path":"name","description":"Old","gallery_display_style_uuid":"style"}'),
-    response(200, '{"uuid":"g","name":"Name","parent_uuid":"root","full_url_path":"name","description":"","gallery_display_style_uuid":"style"}')
+    response(200, '{"uuid":"w","root_gallery_uuid":"root","url":"https://example.com","home_url":"https://external.example.com"}'),
+    response(200, '{"uuid":"g","name":"Name","parent_uuid":"root","slug":"name","slug_path":"name","website_path":"/-/name","description":"Old","gallery_display_style_uuid":"style"}'),
+    response(200, '{"uuid":"g","name":"Name","parent_uuid":"root","slug":"name","slug_path":"name","website_path":"/-/name","description":"","gallery_display_style_uuid":"style"}')
   )
   assert(
     env.api.createOrUpdateGallery(
@@ -1958,6 +2042,7 @@ test("explicit gallery editing can clear the introduction", function()
   )
   equal(payload(env.calls[3]).gallery.description, "")
   equal(collection.settings.description, "")
+  equal(collection.url, "https://example.com/-/name")
   equal(#env.calls, 3)
 end)
 
@@ -1966,8 +2051,8 @@ test("failed synchronization pages never mutate existing Lightroom structure", f
   local existing = service:createPublishedCollection("Existing", service)
   existing.id = "existing"
   enqueue(
-    response(200, '{"uuid":"w","home_url":"https://example.com","root_gallery_uuid":"root"}'),
-    response(200, '[{"uuid":"root","name":"Root","full_url_path":""}]', {
+    response(200, '{"uuid":"w","url":"https://example.com","root_gallery_uuid":"root"}'),
+    response(200, '[{"uuid":"root","name":"Root","website_path":"/-/"}]', {
       { field = "Link", value = '</websites/site/galleries.json?page=2>; rel="next"' },
     }),
     response(403, '{"error":"Denied"}')
@@ -1983,7 +2068,7 @@ test("failed gallery reads do not trigger accidental gallery creation", function
   local service = catalogService()
   local collection = service:createPublishedCollection("Name", service)
   collection.id = "g"
-  enqueue(response(200, '{"uuid":"w","home_url":"https://example.com","root_gallery_uuid":"root"}'), response(403, '{"error":"Denied"}'))
+  enqueue(response(200, '{"uuid":"w","url":"https://example.com","root_gallery_uuid":"root"}'), response(403, '{"error":"Denied"}'))
   local result, message = env.api.createOrUpdateGallery("site", { name = "Name", parents = {}, publishedCollection = collection })
   equal(result, nil)
   equal(message, "Denied")

@@ -101,6 +101,76 @@ local function header(info, name)
   return info.headers[name] and info.headers[name][1]
 end
 
+-- Read the named items in a structured-field list. Quoted values can contain
+-- commas and semicolons, so neither headers nor parameters can be split blindly.
+local function ratePolicies(info, name)
+  local text = table.concat(info.headers[name] or {}, ",")
+  local position, policies = 1, {}
+  local function consume(pattern)
+    local value = text:sub(position):match("^" .. pattern)
+    if value then position = position + #value end
+    return value
+  end
+  local function stringValue()
+    if not consume('"') then return nil end
+    local result = {}
+    while position <= #text do
+      local char = text:sub(position, position)
+      position = position + 1
+      if char == '"' then return table.concat(result) end
+      if char == "\\" then
+        char = text:sub(position, position)
+        if char ~= '"' and char ~= "\\" then return nil end
+        position = position + 1
+      elseif char:byte() < 32 or char:byte() > 126 then
+        return nil
+      end
+      result[#result + 1] = char
+    end
+  end
+  consume("[ \t]*")
+  while position <= #text do
+    local policy = stringValue()
+    if not policy then return {} end
+    local parameters = {}
+    while consume(";") do
+      consume(" *")
+      local key = consume("[a-z*][a-z0-9_.*-]*")
+      if not key then return {} end
+      local value = true
+      if consume("=") then
+        if text:sub(position, position) == '"' then
+          value = stringValue()
+        else
+          local raw = consume("[^;, \t]+")
+          if not raw then return {} end
+          local valid = raw:match("^[%a*][%w!#$%%&'*+.^_`|~:/-]*$")
+            or raw:match("^:[%w+/=]*:$") or raw:match("^%?[01]$")
+            or (#raw:gsub("^-", "") <= 15 and raw:match("^%-?%d+$"))
+            or raw:match("^%-?%d+%.%d%d?%d?$") or raw:match("^@%-?%d+$")
+          if not valid then return {} end
+          -- Only integer-typed values may be used for pacing parameters.
+          value = #raw <= 15 and raw:match("^%d+$") and tonumber(raw) or false
+        end
+        if value == nil then return {} end
+      end
+      parameters[key] = value
+    end
+    for _, key in ipairs({ "q", "w", "r", "t" }) do
+      if parameters[key] ~= nil and (type(parameters[key]) ~= "number" or (key == "w" and parameters[key] == 0)) then
+        return {}
+      end
+    end
+    policies[policy] = parameters
+    consume("[ \t]*")
+    if position > #text then break end
+    if not consume(",") then return {} end
+    consume("[ \t]*")
+    if position > #text then return {} end
+  end
+  return policies
+end
+
 local function normalize(value)
   if type(value) == "table" and value ~= JSON.null then
     for key, item in pairs(value) do
@@ -289,7 +359,7 @@ end
 function Http.new(state, baseURL)
   local client = {}
   local nextRequest, blockedUntil, interval, lastRequest = 0, 0, 1, nil
-  local rateLimit = { aggressiveness = 10, capacity = 60, remaining = 60, window = 60, reset = 60 }
+  local rateLimit = { aggressiveness = 10 }
   local origin = assert(baseURL:match("^(https://[^/]+)$"))
 
   function client.delayNext(seconds)
@@ -330,68 +400,35 @@ function Http.new(state, baseURL)
     lastRequest = LrDate.currentTime()
   end
 
-  local function updateLimits(info)
-    local limit = header(info, "ratelimit-limit")
-    local remaining = tonumber(header(info, "ratelimit-remaining"))
-    local reset = tonumber(header(info, "ratelimit-reset"))
-    if reset and reset >= 0 then
-      rateLimit.reset, rateLimit.window = reset, reset
-    end
-    if limit then
-      local capacity = tonumber(limit:match("^%s*([^,;]+)"))
-      if capacity and capacity >= 0 then
-        rateLimit.capacity = capacity
-        local maxWindow = 0
-        for policy in limit:gmatch("[^,]+") do
-          local quota, parameters = policy:match("^%s*(%d+)%s*(;.*)$")
-          quota = tonumber(quota)
-          if quota and quota <= capacity then
-            for window in parameters:gmatch(";%s*w%s*=%s*(%d+)") do
-              maxWindow = math.max(maxWindow, tonumber(window))
-            end
-          end
-        end
-        if maxWindow > 0 then
-          rateLimit.window = maxWindow
-        end
-      end
-    end
-    if remaining then
-      rateLimit.remaining = remaining
-      if remaining <= 0 then
-        interval = rateLimit.reset
-        blockedUntil = math.max(blockedUntil, LrDate.currentTime() + interval)
-      elseif rateLimit.capacity <= 0 then
-        interval = rateLimit.window
-      elseif remaining < rateLimit.capacity then
-        -- Smooth traffic increasingly as the shared quota fills. Use the full
-        -- policy window, not just the seconds left until the next reset.
-        interval = ((rateLimit.capacity - remaining) / rateLimit.capacity) ^ rateLimit.aggressiveness * rateLimit.window
-      else
-        interval = 0
-      end
-      client.delayNext(interval)
-      log_trace(
-        string.format(
-          " Rate limiting: remaining=%g/%g; window=%g; reset=%g; delay=%.3fs",
-          remaining,
-          rateLimit.capacity,
-          rateLimit.window,
-          rateLimit.reset,
-          interval
-        )
-      )
+  local function updateLimits(info, retries)
+    local policy = ratePolicies(info, "ratelimit-policy").requests
+    local limit = ratePolicies(info, "ratelimit").requests
+    if policy and policy.q then
+      rateLimit.capacity, rateLimit.window = policy.q, policy.w
     end
     local retry = header(info, "retry-after")
-    retry = retry and (tonumber(retry) or ((parseDate(retry) or LrDate.currentTime()) - LrDate.currentTime()))
-    if info.status == 429 then
-      blockedUntil = math.max(blockedUntil, LrDate.currentTime() + (retry or rateLimit.reset))
-    elseif retry then
+    if retry then
+      local date = parseDate(retry)
+      retry = tonumber(retry:match("^%s*(%d+)%s*$")) or (date and math.max(0, date - LrDate.currentTime()))
+    end
+    if limit and limit.r then
+      local capacity, window = rateLimit.capacity, rateLimit.window
+      if limit.r == 0 then
+        -- Retry-After takes precedence over this response's effective window.
+        interval = retry or limit.t or window or interval
+      elseif capacity and window then
+        -- Use w, not the effective window t, for adaptive background pacing.
+        interval = capacity == 0 and window or window * (math.max(0, (capacity - limit.r) / capacity)) ^ rateLimit.aggressiveness
+      end
+      client.delayNext(interval)
+      log_trace(string.format(" Rate limiting: requests remaining=%g; delay=%.3fs", limit.r, interval))
+    end
+    if retry then
       blockedUntil = math.max(blockedUntil, LrDate.currentTime() + retry)
-    elseif info.status == 0 then
-      -- Native networking can hide throttling responses. Leave a reset window
-      -- of silence before issuing further API requests after a network failure.
-      blockedUntil = math.max(blockedUntil, LrDate.currentTime() + rateLimit.reset)
+    elseif info.status == 429 or info.status == 0 then
+      -- Pause all API work, even when a caller handles the error or an
+      -- ambiguous mutation cannot itself be retried safely.
+      client.delayNext(2 ^ (retries + 1) + math.random())
     end
   end
 
@@ -439,7 +476,7 @@ function Http.new(state, baseURL)
       log_trace(string.format(" -> %s %s", method, target:match("^[^?]+")))
       local body, responseHeaders = send(method, origin .. target, headers, parts)
       local info = responseInfo(responseHeaders)
-      updateLimits(info)
+      updateLimits(info, retries)
       log_trace(string.format(" <- %d [%s]", info.status, info.request_id or "No request ID"))
       if info.status == 307 then
         redirects = redirects + 1
@@ -478,7 +515,9 @@ function Http.new(state, baseURL)
           retries = retries + 1
         elseif method == "GET" and (info.status == 0 or info.status >= 500) and retries < 3 then
           retries = retries + 1
-          client.delayNext(2 ^ retries + math.random())
+          if info.status ~= 0 then
+            client.delayNext(2 ^ retries + math.random())
+          end
         else
           return nil, message, info
         end

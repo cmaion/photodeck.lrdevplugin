@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Minor PhotoDeck related API updates
+- Align the API implementation with PhotoDeck API documentation v1.6.1.
 
 ## 0.20.2
 
